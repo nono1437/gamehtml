@@ -46,10 +46,13 @@ object NavHelper {
             title?.let { u.appendQueryParameter("title", it) }
             return u.build().toString()
         }
-        // Ruffle / swf2js 使用 player.html（从 flash.local 加载，确保 XHR/fetch 能被拦截）
+
+        // Ruffle / swf2js 使用 player.html。
+        // 远程 SWF 先包装成 flash.local 同源代理，避免 WebView/Ruffle 跨域 fetch 被 CORS 阻断。
+        val playbackSwfUrl = RemoteSwfProxy.wrap(swfUrl)
         val u = Uri.parse("https://flash.local/player.html")
             .buildUpon()
-            .appendQueryParameter("swf", swfUrl)
+            .appendQueryParameter("swf", playbackSwfUrl)
             .appendQueryParameter("engine", PrefsManager.flashEngine)
             .appendQueryParameter("autoplay", if (PrefsManager.isFlashAutoplay) "on" else "off")
         // Ruffle 模式传递 CDN/本地路径
