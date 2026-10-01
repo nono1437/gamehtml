@@ -28,6 +28,16 @@ class GameAutoConfigTest {
     }
 
     @Test
+    fun unwraps4399SwfHtmlWrapperToActualGameSwf() {
+        val wrapper = "https://www.4399.com/flash/swf.htm?gamepath=//sxiao.4399.com/4399swf/upload_swf/ftp20/tangyongfeng/20161201/3.swf&gamemark=1%7C1%7C0&gamename=%E6%96%B0%E9%BB%84%E9%87%91%E7%9F%BF%E5%B7%A5"
+
+        assertEquals(
+            "https://sxiao.4399.com/4399swf/upload_swf/ftp20/tangyongfeng/20161201/3.swf",
+            GameAutoConfig.selectBestSwf(listOf(SwfCandidate(wrapper, "remote")))?.url
+        )
+    }
+
+    @Test
     fun refusesAmbiguousOrJunkOnlyCandidates() {
         assertNull(
             GameAutoConfig.selectBestSwf(
