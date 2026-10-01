@@ -72,8 +72,14 @@ class WebAppInterface(private val context: Context) {
         val prefix = "nono_game_${gameId}_"
         val swfUrl = PrefsManager.sp.getString(prefix + "swf", null)?.takeIf { it.isNotBlank() }
             ?: return false
-        val keys = PrefsManager.sp.getString(prefix + "keys", "")
+        val storedKeys = PrefsManager.sp.getString(prefix + "keys", "")
             .orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        // 已知游戏配置优先，可自动修正旧版本误缓存的其他玩家按键。
+        val knownKeys = GameAutoConfig.actionKeysForGame(gameId, "")
+        val keys = if (knownKeys.isNotEmpty()) knownKeys else storedKeys
+        if (keys != storedKeys) {
+            PrefsManager.sp.edit().putString(prefix + "keys", keys.joinToString(",")).apply()
+        }
         if (keys.isNotEmpty()) applyDetectedKeys(keys)
         Log.d("WebApp:AutoPlay", "缓存命中 game=$gameId swf=$swfUrl keys=$keys")
         handler.post { openSwfOnMainThread(swfUrl, page) }
@@ -110,8 +116,8 @@ class WebAppInterface(private val context: Context) {
         }
 
         val best = GameAutoConfig.selectBestSwf(candidates) ?: return false
-        val keys = GameAutoConfig.detectActionKeys(pageText.orEmpty())
         val gameId = GameAutoConfig.gameIdFromUrl(pageUrl)
+        val keys = GameAutoConfig.actionKeysForGame(gameId, pageText.orEmpty())
         if (gameId != null) {
             val prefix = "nono_game_${gameId}_"
             PrefsManager.sp.edit()
