@@ -14,7 +14,10 @@
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
-  #stage { position: fixed; inset: 0; width: 100%; height: 100%; background: #000; }
+  #stage {
+    position: fixed; inset: 0; width: 100%; height: 100%; background: #000;
+    display: flex; align-items: center; justify-content: center;
+  }
   #stage canvas, #stage ruffle-player {
     font-family: "Microsoft YaHei", "微软雅黑", "Noto Sans CJK SC", "Source Han Sans SC",
                  "PingFang SC", "Heiti SC", "SimHei", "WenQuanYi Micro Hei",
@@ -53,7 +56,7 @@
     var SWF_URL    = param('swf');
     var BASE_URL   = param('base');
     var TITLE      = param('title') || 'Flash 游戏';
-    var ENGINE     = param('engine', 'ruffle');  // ruffle
+    var ENGINE     = param('engine', 'ruffle');
     var CDN_URL    = param('cdn', '');
     var CDN_PATH   = param('path', '');
     var AUTOPLAY   = param('autoplay', 'on');
@@ -75,7 +78,7 @@
       "polyfills": true,
       "autoplay": AUTOPLAY,
       "unmuteOverlay": "visible",
-      "letterbox": "fullscreen",
+      "letterbox": "on",
       "upgradeToHttps": true,
       "allowScriptAccess": true,
       "scale": "showAll",
@@ -83,11 +86,11 @@
       "allowFullscreen": false,
       "splashScreen": true,
       "preloader": true,
+      "backgroundExecution": "none",
       "logLevel": "warn",
       "maxExecutionDuration": {"secs": 15, "nanos": 0}
     };
     // 本地引擎模式：加载 simhei.ttf 字体解决中文显示问题
-    // CDN 模式下无本地字体文件，跳过
     if (rufflePath.indexOf('flash.local') >= 0) {
       ruffleConfig.fontSources = [rufflePath + 'simhei.ttf'];
       ruffleConfig.defaultFonts = {
@@ -100,6 +103,32 @@
       };
     }
     window.RufflePlayer.config = ruffleConfig;
+
+    function forEachPlayer(fn) {
+      var players = document.querySelectorAll('ruffle-player');
+      for (var i = 0; i < players.length; i++) {
+        try { fn(players[i]); } catch (e) {}
+      }
+    }
+    window.__nonoSuspendRuffle = function() {
+      forEachPlayer(function(player) {
+        try { player.ruffle(1).suspend(); }
+        catch (e) { try { player.pause(); } catch (_) {} }
+      });
+    };
+    window.__nonoResumeRuffle = function() {
+      forEachPlayer(function(player) {
+        try { player.ruffle(1).resume(); }
+        catch (e) { try { player.play(); } catch (_) {} }
+      });
+    };
+    document.addEventListener('visibilitychange', function() {
+      if (document.hidden) window.__nonoSuspendRuffle();
+      else window.__nonoResumeRuffle();
+    });
+    window.addEventListener('pagehide', window.__nonoSuspendRuffle);
+    window.addEventListener('blur', window.__nonoSuspendRuffle);
+    window.addEventListener('focus', window.__nonoResumeRuffle);
 
     // 2) 动态加载 Ruffle
     var s = document.createElement('script');
@@ -114,6 +143,7 @@
         player.style.width = '100%';
         player.style.height = '100%';
         player.style.display = 'block';
+        player.style.margin = 'auto';
         var opt = { url: SWF_URL, allowScriptAccess: true };
         if (BASE_URL) opt.base = BASE_URL;
         player.ruffle().load(opt);
@@ -137,6 +167,8 @@
         stage.appendChild(player);
         player.style.width = '100%';
         player.style.height = '100%';
+        player.style.display = 'block';
+        player.style.margin = 'auto';
         var opt = { url: url, allowScriptAccess: true };
         if (base) opt.base = base;
         player.ruffle().load(opt);
