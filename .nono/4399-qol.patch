@@ -1,7 +1,21 @@
 diff --git a/app/src/main/java/com/game4399/app/webview/GameWebViewClient.kt b/app/src/main/java/com/game4399/app/webview/GameWebViewClient.kt
 --- a/app/src/main/java/com/game4399/app/webview/GameWebViewClient.kt
 +++ b/app/src/main/java/com/game4399/app/webview/GameWebViewClient.kt
-@@ -164,6 +164,51 @@ open class GameWebViewClient(
+@@ -54,6 +54,13 @@ open class GameWebViewClient(
+ 
+         // 2. 拦截 flash.local 虚拟域名
+         if (url.contains("flash.local")) {
++            // nono 二改：远程 SWF 统一走 flash.local 同源代理。
++            // Ruffle 只看见同源请求；真正的 4399 CDN 下载由原生层完成，彻底绕开浏览器 CORS。
++            val remoteSwfUrl = RemoteSwfProxy.unwrap(url)
++            if (remoteSwfUrl != null) {
++                android.util.Log.d("GameWebViewClient", "remote.swf 同源代理 -> $remoteSwfUrl")
++                return interceptSwf(remoteSwfUrl, request)
++            }
+             val path = url.substringAfter("flash.local/").substringBefore("?")
+             // 本地 SWF 代理：flash.local/local.swf → 读取真实文件
+             if (path == "local.swf") {
+@@ -164,6 +171,51 @@ open class GameWebViewClient(
            ruffleScript.onload = function() {
              console.log('[Ruffle] 引擎加载完成');
            };
