@@ -62,4 +62,14 @@ class GameAutoConfigTest {
             GameAutoConfig.detectActionKeys("操作说明 玩家1：J攻击 K跳跃 玩家2：数字键操作")
         )
     }
+
+    @Test
+    fun usesKnownGoldenMinerPlayerOneProfileInsteadOfLeakingOtherPlayerKeys() {
+        val noisyPageText = "操作说明 玩家1 W 投雷或上拉 S 下钩或种植 双人模式方向键操作 玩家3 I 投雷 K 下钩"
+
+        assertEquals(
+            listOf("W", "S"),
+            GameAutoConfig.actionKeysForGame("182762", noisyPageText)
+        )
+    }
 }
