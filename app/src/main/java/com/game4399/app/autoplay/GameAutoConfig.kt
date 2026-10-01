@@ -1,0 +1,98 @@
+package com.game4399.app.autoplay
+
+data class SwfCandidate(
+    val url: String,
+    val title: String = "",
+    val size: String = ""
+)
+
+object GameAutoConfig {
+    private val gameIdRegex = Regex("/flash/(\\d+)(?:\\.html?)?(?:[?#]|$)", RegexOption.IGNORE_CASE)
+    private val junkNames = setOf("cell.swf", "objtest.swf", "a4399dv_base.swf")
+
+    fun gameIdFromUrl(url: String): String? = gameIdRegex.find(url)?.groupValues?.getOrNull(1)
+
+    fun selectBestSwf(candidates: List<SwfCandidate>): SwfCandidate? {
+        data class Scored(val candidate: SwfCandidate, val score: Int, val canonical: String)
+
+        val scored = candidates.mapNotNull { c ->
+            val normalized = c.url.trim()
+            if (!normalized.contains(".swf", ignoreCase = true)) return@mapNotNull null
+            val score = scoreSwf(normalized)
+            if (score < 0) return@mapNotNull null
+            Scored(c.copy(url = normalized), score, canonicalKey(normalized))
+        }
+        if (scored.isEmpty()) return null
+
+        val groups = scored.groupBy { it.canonical }.map { (_, entries) ->
+            entries.maxWithOrNull(
+                compareBy<Scored> { it.score }
+                    .thenBy { if (it.candidate.url.contains("sxiao.4399.com", ignoreCase = true)) 1 else 0 }
+            )!!
+        }.sortedByDescending { it.score }
+
+        val top = groups.firstOrNull() ?: return null
+        if (top.score < 70) return null
+        val second = groups.getOrNull(1)
+        if (second != null && top.score - second.score < 25) return null
+        return top.candidate
+    }
+
+    fun detectActionKeys(pageText: String): List<String> {
+        if (pageText.isBlank()) return emptyList()
+        var section = pageText
+        val operationIndex = section.indexOf("操作说明")
+        if (operationIndex >= 0) section = section.substring(operationIndex)
+        section = section.take(900)
+
+        val player1 = Regex("玩家\\s*1", RegexOption.IGNORE_CASE).find(section)
+        if (player1 != null) {
+            section = section.substring(player1.range.first)
+            val nextPlayer = Regex("玩家\\s*[23]", RegexOption.IGNORE_CASE).find(section, player1.value.length)
+            if (nextPlayer != null) section = section.substring(0, nextPlayer.range.first)
+            section = section.take(350)
+        } else {
+            section = section.take(500)
+        }
+
+        val out = linkedSetOf<String>()
+        Regex("(?<![A-Z0-9])([A-Z])(?![A-Z0-9])").findAll(section.uppercase()).forEach { m ->
+            out += m.groupValues[1]
+        }
+
+        val lower = section.lowercase()
+        if ("空格" in section || "space" in lower) out += "SPACE"
+        if ("回车" in section || "enter" in lower) out += "ENTER"
+        if (Regex("(?<![a-z])ctrl(?![a-z])", RegexOption.IGNORE_CASE).containsMatchIn(section)) out += "CTRL"
+        if (Regex("(?<![a-z])shift(?![a-z])", RegexOption.IGNORE_CASE).containsMatchIn(section)) out += "SHIFT"
+        if (Regex("(?<![a-z])alt(?![a-z])", RegexOption.IGNORE_CASE).containsMatchIn(section)) out += "ALT"
+
+        return out.take(8)
+    }
+
+    private fun scoreSwf(url: String): Int {
+        val lower = url.lowercase()
+        val cleanPath = lower.substringBefore('?').substringBefore('#')
+        val fileName = cleanPath.substringAfterLast('/')
+        if (fileName in junkNames) return -1000
+        if ("comment.4399pk.com" in lower) return -1000
+        if ("/jss/" in lower) return -900
+        if ("/control/" in lower && "4399" in lower) return -800
+
+        var score = 0
+        if ("/upload_swf/" in lower) score += 80
+        if ("sxiao.4399.com" in lower) score += 25
+        if ("/4399swf/" in lower) score += 10
+        if (Regex("/ftp\\d+/", RegexOption.IGNORE_CASE).containsMatchIn(lower)) score += 8
+        if (Regex("/20\\d{6}/").containsMatchIn(lower)) score += 8
+        if (fileName.matches(Regex("\\d+\\.swf"))) score += 4
+        return score
+    }
+
+    private fun canonicalKey(url: String): String {
+        val lower = url.lowercase().substringBefore('?').substringBefore('#')
+        val marker = "upload_swf/"
+        val i = lower.indexOf(marker)
+        return if (i >= 0) lower.substring(i) else lower
+    }
+}
