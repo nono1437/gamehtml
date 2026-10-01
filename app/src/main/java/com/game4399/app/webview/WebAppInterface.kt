@@ -87,23 +87,23 @@ class WebAppInterface(private val context: Context) {
     @JavascriptInterface
     fun autoPlaySwf(json: String?, pageUrl: String?, pageText: String?): Boolean {
         if (json.isNullOrBlank() || pageUrl.isNullOrBlank()) return false
-        val candidates = try {
+        val candidates: List<SwfCandidate> = try {
             val arr = org.json.JSONArray(json)
-            buildList {
-                for (i in 0 until arr.length()) {
-                    val obj = arr.optJSONObject(i) ?: continue
-                    val url = obj.optString("url", "").trim()
-                    if (url.isNotEmpty()) {
-                        add(
-                            SwfCandidate(
-                                url = url,
-                                title = obj.optString("title", ""),
-                                size = obj.optString("size", "")
-                            )
+            val parsed = mutableListOf<SwfCandidate>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val url = obj.optString("url", "").trim()
+                if (url.isNotEmpty()) {
+                    parsed.add(
+                        SwfCandidate(
+                            url = url,
+                            title = obj.optString("title", ""),
+                            size = obj.optString("size", "")
                         )
-                    }
+                    )
                 }
             }
+            parsed
         } catch (e: Exception) {
             Log.w("WebApp:AutoPlay", "候选解析失败: ${e.message}")
             return false
