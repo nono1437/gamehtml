@@ -10,6 +10,12 @@ object GameAutoConfig {
     private val gameIdRegex = Regex("/flash/(\\d+)(?:\\.html?)?(?:[?#]|$)", RegexOption.IGNORE_CASE)
     private val junkNames = setOf("cell.swf", "objtest.swf", "a4399dv_base.swf")
 
+    /** 已实机确认过的少量游戏配置，优先于页面文案自动识别。 */
+    private val knownActionKeys = mapOf(
+        // 新黄金矿工：玩家1 W=投雷/上拉，S=下钩/种植
+        "182762" to listOf("W", "S")
+    )
+
     fun gameIdFromUrl(url: String): String? = gameIdRegex.find(url)?.groupValues?.getOrNull(1)
 
     fun selectBestSwf(candidates: List<SwfCandidate>): SwfCandidate? {
@@ -36,6 +42,10 @@ object GameAutoConfig {
         val second = groups.getOrNull(1)
         if (second != null && top.score - second.score < 25) return null
         return top.candidate
+    }
+
+    fun actionKeysForGame(gameId: String?, pageText: String): List<String> {
+        return knownActionKeys[gameId] ?: detectActionKeys(pageText)
     }
 
     fun detectActionKeys(pageText: String): List<String> {
