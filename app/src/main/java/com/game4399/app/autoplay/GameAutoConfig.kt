@@ -18,11 +18,44 @@ object GameAutoConfig {
 
     fun gameIdFromUrl(url: String): String? = gameIdRegex.find(url)?.groupValues?.getOrNull(1)
 
+    /**
+     * 4399 某些页面不会直接暴露 SWF，而是给出 /flash/swf.htm?gamepath=... 包装页。
+     * Ruffle 若加载包装页，实际拿到的是 HTML，最终会报“不是合法 SWF”。
+     * 这里在候选进入打分/缓存前就解出真正的 gamepath。
+     */
+    fun normalizeSwfUrl(rawUrl: String): String {
+        val original = rawUrl.trim()
+        val pathLower = original.substringBefore('?').substringBefore('#').lowercase()
+        val is4399Wrapper = pathLower.endsWith("/flash/swf.htm") || pathLower.endsWith("/flash/swf.html")
+        if (!is4399Wrapper) return original
+
+        val query = original.substringAfter('?', "").substringBefore('#')
+        val encodedGamePath = query
+            .split('&')
+            .firstOrNull { it.substringBefore('=').equals("gamepath", ignoreCase = true) }
+            ?.substringAfter('=', "")
+            ?.takeIf { it.isNotBlank() }
+            ?: return original
+
+        val decoded = runCatching {
+            java.net.URLDecoder.decode(encodedGamePath, Charsets.UTF_8.name())
+        }.getOrDefault(encodedGamePath).trim()
+
+        val resolved = when {
+            decoded.startsWith("//") -> "https:$decoded"
+            decoded.startsWith("https://", ignoreCase = true) || decoded.startsWith("http://", ignoreCase = true) -> decoded
+            decoded.startsWith("/") -> "https://www.4399.com$decoded"
+            else -> "https://$decoded"
+        }
+
+        return if (resolved.contains(".swf", ignoreCase = true)) resolved else original
+    }
+
     fun selectBestSwf(candidates: List<SwfCandidate>): SwfCandidate? {
         data class Scored(val candidate: SwfCandidate, val score: Int, val canonical: String)
 
         val scored = candidates.mapNotNull { c ->
-            val normalized = c.url.trim()
+            val normalized = normalizeSwfUrl(c.url)
             if (!normalized.contains(".swf", ignoreCase = true)) return@mapNotNull null
             val score = scoreSwf(normalized)
             if (score < 0) return@mapNotNull null
