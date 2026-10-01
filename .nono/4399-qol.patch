@@ -1,0 +1,158 @@
+diff --git a/app/src/main/java/com/game4399/app/webview/GameWebViewClient.kt b/app/src/main/java/com/game4399/app/webview/GameWebViewClient.kt
+--- a/app/src/main/java/com/game4399/app/webview/GameWebViewClient.kt
++++ b/app/src/main/java/com/game4399/app/webview/GameWebViewClient.kt
+@@ -164,6 +164,51 @@ open class GameWebViewClient(
+           ruffleScript.onload = function() {
+             console.log('[Ruffle] 引擎加载完成');
+           };
+           document.head.appendChild(ruffleScript);
++
++          // === nono 二改：4399 Flash 页自动找出真正游戏 SWF ===
++          // 命中历史缓存时直接进入；第一次则扫描 DOM / Performance / HTML 源码，
++          // 交给 Android 端做保守打分，避免把 cell.swf / objtest.swf / 评论组件当成游戏。
++          if (/4399\.com\/flash\/[0-9]+/i.test(window.location.href)) {
++            (function(){
++              var tries = 0;
++              function scanGameSwf(){
++                tries++;
++                try {
++                  if (window.Android && window.Android.openCachedGame &&
++                      window.Android.openCachedGame(window.location.href)) return;
++                } catch(e) {}
++
++                var seen = {}, found = [];
++                function add(raw, title) {
++                  if (!raw || String(raw).toLowerCase().indexOf('.swf') < 0) return;
++                  try { raw = new URL(String(raw), window.location.href).href; } catch(e) { raw = String(raw); }
++                  if (seen[raw]) return;
++                  seen[raw] = true;
++                  found.push({url: raw, title: title || ''});
++                }
++
++                try {
++                  var nodes = document.querySelectorAll('object,embed,param,a,script');
++                  var attrs = ['src','data','href','value'];
++                  for (var i = 0; i < nodes.length; i++) {
++                    for (var j = 0; j < attrs.length; j++) add(nodes[i].getAttribute(attrs[j]), nodes[i].id || nodes[i].title || '');
++                  }
++                } catch(e) {}
++                try {
++                  var entries = performance.getEntriesByType('resource');
++                  for (var k = 0; k < entries.length; k++) add(entries[k].name, '');
++                } catch(e) {}
++                try {
++                  var html = document.documentElement ? document.documentElement.innerHTML : '';
++                  var matches = html.match(/(?:https?:\/\/|\/|\.\/|\.\.\/)[^\"'<>\\s]+\.swf(?:\?[^\"'<>\\s]*)?/ig) || [];
++                  for (var m = 0; m < matches.length; m++) add(matches[m], '');
++                } catch(e) {}
++
++                var text = '';
++                try { text = document.body ? document.body.innerText.slice(0, 120000) : ''; } catch(e) {}
++                var accepted = false;
++                try {
++                  accepted = !!(window.Android && window.Android.autoPlaySwf &&
++                    window.Android.autoPlaySwf(JSON.stringify(found), window.location.href, text));
++                } catch(e) {}
++                if (!accepted && tries < 3) setTimeout(scanGameSwf, 1200);
++              }
++              setTimeout(scanGameSwf, 650);
++            })();
++          }
+           """ else """
+           // === WAFlash 模式：hook Flash 创建，跳转到 WAFlash 播放器 ===
+           var __wafRedirected = false;
+diff --git a/app/src/main/java/com/game4399/app/GameActivity.kt b/app/src/main/java/com/game4399/app/GameActivity.kt
+--- a/app/src/main/java/com/game4399/app/GameActivity.kt
++++ b/app/src/main/java/com/game4399/app/GameActivity.kt
+@@ -1296,11 +1296,17 @@ class GameActivity : AppCompatActivity() {
+         // 释放所有虚拟手柄按下的按键，防止 Ruffle 角色持续移动
+         webView.releaseAllKeys()
+-        // 暂停 Flash/H5 游戏的 JS 定时器，省电
++        // 明确挂起 Ruffle：同时停止帧、脚本和声音，避免切后台后 BGM 继续播放
+         runCatching { webView.evaluateJavascript(
+-            "(function(){try{if(window.RufflePlayer){var r=window.RufflePlayer.newest();}}catch(e){}})();", null
++            "(function(){try{if(window.__nonoSuspendRuffle){window.__nonoSuspendRuffle();return;}var ps=document.querySelectorAll('ruffle-player');for(var i=0;i<ps.length;i++){try{ps[i].ruffle(1).suspend();}catch(x){try{ps[i].pause();}catch(y){}}}}catch(e){}})();", null
+         ) }
+         webView.onPause()
+     }
+ 
+     override fun onResume() {
+         super.onResume()
+         webView.onResume()
++        runCatching { webView.evaluateJavascript(
++            "(function(){try{if(window.__nonoResumeRuffle){window.__nonoResumeRuffle();return;}var ps=document.querySelectorAll('ruffle-player');for(var i=0;i<ps.length;i++){try{ps[i].ruffle(1).resume();}catch(x){try{ps[i].play();}catch(y){}}}}catch(e){}})();", null
++        ) }
+         // 横竖屏切换或从后台返回后重新隐藏系统栏
+         applyImmersiveFullscreen()
+diff --git a/app/src/main/java/com/game4399/app/webview/GameWebView.kt b/app/src/main/java/com/game4399/app/webview/GameWebView.kt
+--- a/app/src/main/java/com/game4399/app/webview/GameWebView.kt
++++ b/app/src/main/java/com/game4399/app/webview/GameWebView.kt
+@@ -44,6 +44,10 @@ open class GameWebView @JvmOverloads constructor(
+     /** 是否正在拖动旋转视角 */
+     private var cameraDragging = false
++
++    /** 最近一次直接触摸游戏区域的位置，供虚拟鼠标左右键使用。 */
++    private var lastPointerX = Float.NaN
++    private var lastPointerY = Float.NaN
+ 
+     /**
+      * 当前通过虚拟手柄按下的按键集合（Android KeyCode）。
+@@ -121,6 +125,10 @@ open class GameWebView @JvmOverloads constructor(
+     // ---------------- 触屏 ----------------
+     override fun onTouchEvent(event: MotionEvent): Boolean {
++        if (event.actionMasked != MotionEvent.ACTION_CANCEL && event.pointerCount > 0) {
++            lastPointerX = event.getX(0)
++            lastPointerY = event.getY(0)
++        }
+         gestureDetector.onTouchEvent(event)
+         if (event.action == MotionEvent.ACTION_DOWN) performClick()
+ 
+@@ -369,6 +377,22 @@ open class GameWebView @JvmOverloads constructor(
+ 
+     // ---------------- 鼠标事件注入 ----------------
++
++    private fun pointerX(): Float = if (lastPointerX.isNaN()) width / 2f else lastPointerX.coerceIn(0f, width.toFloat())
++    private fun pointerY(): Float = if (lastPointerY.isNaN()) height / 2f else lastPointerY.coerceIn(0f, height.toFloat())
++
++    /** 虚拟鼠标键不再拿按钮自身坐标点击网页，而是点击最近一次触摸的游戏位置。 */
++    fun injectMouseLeftClickAtPointer() = injectMouseLeftClick(pointerX(), pointerY())
++    fun injectMouseRightClickAtPointer() = injectMouseRightClick(pointerX(), pointerY())
++    fun injectMouseLeftDownAtPointer() = injectMouseLeftDown(pointerX(), pointerY())
++    fun injectMouseLeftUpAtPointer() = injectMouseLeftUp(pointerX(), pointerY())
+ 
+     /** 在 WebView 中心坐标注入鼠标移动事件（用于旋转视角） */
+     fun injectMouseMove(dx: Float, dy: Float) {
+diff --git a/app/src/main/java/com/game4399/app/input/MouseControlView.kt b/app/src/main/java/com/game4399/app/input/MouseControlView.kt
+--- a/app/src/main/java/com/game4399/app/input/MouseControlView.kt
++++ b/app/src/main/java/com/game4399/app/input/MouseControlView.kt
+@@ -148,8 +148,8 @@ class MouseControlView @JvmOverloads constructor(
+                                 longPressTriggered = true
+                                 // 长按：注入鼠标按下，进入旋转模式
+                                 when (activeButton) {
+-                                    1 -> targetWebView?.injectMouseLeftDown(downX, downY)
+-                                    2 -> targetWebView?.injectMouseRightClick(downX, downY)
++                                    1 -> targetWebView?.injectMouseLeftDownAtPointer()
++                                    2 -> targetWebView?.injectMouseRightClickAtPointer()
+                                 }
+                                 lastMoveX = downX
+                                 lastMoveY = downY
+@@ -177,7 +177,7 @@ class MouseControlView @JvmOverloads constructor(
+                     if (longPressTriggered) {
+                         // 长按松开：注入鼠标松开
+                         when (activeButton) {
+-                            1 -> targetWebView?.injectMouseLeftUp(event.x, event.y)
++                            1 -> targetWebView?.injectMouseLeftUpAtPointer()
+                         }
+                         if (isDragging) {
+                             // 拖动结束，不需要额外点击
+@@ -188,8 +188,8 @@ class MouseControlView @JvmOverloads constructor(
+                     } else {
+                         // 短按：单击
+                         when (activeButton) {
+-                            1 -> targetWebView?.injectMouseLeftClick(event.x, event.y)
+-                            2 -> targetWebView?.injectMouseRightClick(event.x, event.y)
++                            1 -> targetWebView?.injectMouseLeftClickAtPointer()
++                            2 -> targetWebView?.injectMouseRightClickAtPointer()
+                         }
+                     }
+                     leftPressed = false
