@@ -21,8 +21,8 @@ android {
         applicationId = "com.game4399.app"
         minSdk = 23
         targetSdk = 34
-        versionCode = 4
-        versionName = "3.3.1-nono"
+        versionCode = 5
+        versionName = "3.3.2-nono"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -30,7 +30,7 @@ android {
 
     // 签名配置：有 keystore.properties 用正式签名，否则用内置 debug.keystore（可用 MT 管理器重新签名）
     signingConfigs {
-        // 内置 CI 签名，确保 CI 和本地都能签名（独立配置，不覆盖默认 debug）
+        // 内置 CI 签名，确保每次 GitHub Actions 构建都使用同一证书，便于覆盖更新测试包
         create("ci") {
             storeFile = file("debug.keystore")
             storePassword = "android"
@@ -63,6 +63,8 @@ android {
             isMinifyEnabled = false
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+            // 固定使用仓库内 debug.keystore，避免不同 Actions runner 生成不同签名导致无法覆盖安装
+            signingConfig = signingConfigs.getByName("ci")
         }
     }
 
