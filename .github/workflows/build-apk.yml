@@ -37,14 +37,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ---------- 2. 配置 JDK 17 ----------
+      # ---------- 2. 应用 nono 二改补丁 ----------
+      - name: Apply nono QoL patch
+        run: |
+          git apply --recount --check .nono/4399-qol.patch
+          git apply --recount .nono/4399-qol.patch
+
+      # ---------- 3. 配置 JDK 17 ----------
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      # ---------- 3. 验证 Android SDK（ubuntu-latest 已预装） ----------
+      # ---------- 4. 验证 Android SDK（ubuntu-latest 已预装） ----------
       - name: Verify Android SDK
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME"
@@ -69,7 +75,7 @@ jobs:
           ls "$ANDROID_HOME/platforms/" 2>/dev/null
           ls "$ANDROID_HOME/build-tools/" 2>/dev/null
 
-      # ---------- 4. 生成 Gradle Wrapper ----------
+      # ---------- 5. 生成 Gradle Wrapper ----------
       - name: Generate Gradle Wrapper
         run: |
           echo "=== 诊断：预装的 Gradle init 脚本 ==="
@@ -91,11 +97,11 @@ jobs:
           chmod +x gradlew
           ./gradlew --version
 
-      # ---------- 5. 单元测试 ----------
+      # ---------- 6. 单元测试 ----------
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest --stacktrace
 
-      # ---------- 6. 准备 Release 签名 ----------
+      # ---------- 7. 准备 Release 签名 ----------
       - name: Prepare signing key
         env:
           SIGNING_KEY_BASE64: ${{ secrets.SIGNING_KEY_BASE64 }}
@@ -117,17 +123,17 @@ jobs:
             echo "✓ keystore.properties 已生成"
           fi
 
-      # ---------- 7. 构建 Debug APK ----------
+      # ---------- 8. 构建 Debug APK ----------
       - name: Build Debug APK
         if: ${{ github.event_name == 'push' || inputs.build_type == 'debug' || inputs.build_type == 'both' }}
         run: ./gradlew assembleDebug --stacktrace
 
-      # ---------- 8. 构建 Release APK ----------
+      # ---------- 9. 构建 Release APK ----------
       - name: Build Release APK
         if: ${{ github.event_name == 'workflow_dispatch' && (inputs.build_type == 'release' || inputs.build_type == 'both') }}
         run: ./gradlew assembleRelease --stacktrace
 
-      # ---------- 9. 收集 APK ----------
+      # ---------- 10. 收集 APK ----------
       - name: Collect APKs
         run: |
           echo "=== 构建产物 ==="
@@ -149,7 +155,7 @@ jobs:
           echo "=== artifacts 目录 ==="
           ls -lh artifacts/ 2>/dev/null || echo "artifacts 为空"
 
-      # ---------- 10. 上传 Artifact ----------
+      # ---------- 11. 上传 Artifact ----------
       - name: Upload Debug APK
         if: ${{ github.event_name == 'push' || inputs.build_type == 'debug' || inputs.build_type == 'both' }}
         uses: actions/upload-artifact@v4
@@ -168,7 +174,7 @@ jobs:
           retention-days: 90
           if-no-files-found: warn
 
-      # ---------- 11. 构建摘要 ----------
+      # ---------- 12. 构建摘要 ----------
       - name: Summary
         if: always()
         run: |
