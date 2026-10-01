@@ -7,7 +7,12 @@ import android.os.Looper
 import android.util.Log
 import android.webkit.JavascriptInterface
 import android.widget.Toast
+import com.game4399.app.R
+import com.game4399.app.autoplay.GameAutoConfig
+import com.game4399.app.autoplay.SwfCandidate
 import com.game4399.app.data.FavoriteStore
+import com.game4399.app.data.PrefsManager
+import com.game4399.app.input.ActionButtonView
 
 /**
  * 注入到 WebView 的 JS 接口（window.Android）。
@@ -53,12 +58,110 @@ class WebAppInterface(private val context: Context) {
     fun openSwf(swfUrl: String?, pageUrl: String?) {
         if (swfUrl.isNullOrEmpty()) return
         Log.d("WebApp:WAFlash", "openSwf: $swfUrl (from: $pageUrl)")
-        handler.post {
-            val playerUrl = NavHelper.playerUrl(swfUrl, pageUrl, null)
-            if (context is com.game4399.app.GameActivity) {
-                val activity = context as com.game4399.app.GameActivity
-                activity.loadSwfInWebView(playerUrl)
+        handler.post { openSwfOnMainThread(swfUrl, pageUrl) }
+    }
+
+    /**
+     * nono 二改：若这个 4399 游戏以前已经成功识别过 SWF，就跳过网页检测页直接播放。
+     * 返回 true 表示命中缓存，JS 不需要再次扫描。
+     */
+    @JavascriptInterface
+    fun openCachedGame(pageUrl: String?): Boolean {
+        val page = pageUrl ?: return false
+        val gameId = GameAutoConfig.gameIdFromUrl(page) ?: return false
+        val prefix = "nono_game_${gameId}_"
+        val swfUrl = PrefsManager.sp.getString(prefix + "swf", null)?.takeIf { it.isNotBlank() }
+            ?: return false
+        val keys = PrefsManager.sp.getString(prefix + "keys", "")
+            .orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        if (keys.isNotEmpty()) applyDetectedKeys(keys)
+        Log.d("WebApp:AutoPlay", "缓存命中 game=$gameId swf=$swfUrl keys=$keys")
+        handler.post { openSwfOnMainThread(swfUrl, page) }
+        return true
+    }
+
+    /**
+     * nono 二改：接收网页自动扫描到的 SWF 候选，过滤 4399 的 cell/objtest/评论组件，
+     * 高置信度时直接打开真正游戏 SWF，并从“操作说明”里自动映射玩家 1 的按键。
+     */
+    @JavascriptInterface
+    fun autoPlaySwf(json: String?, pageUrl: String?, pageText: String?): Boolean {
+        if (json.isNullOrBlank() || pageUrl.isNullOrBlank()) return false
+        val candidates = try {
+            val arr = org.json.JSONArray(json)
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val obj = arr.optJSONObject(i) ?: continue
+                    val url = obj.optString("url", "").trim()
+                    if (url.isNotEmpty()) {
+                        add(
+                            SwfCandidate(
+                                url = url,
+                                title = obj.optString("title", ""),
+                                size = obj.optString("size", "")
+                            )
+                        )
+                    }
+                }
             }
+        } catch (e: Exception) {
+            Log.w("WebApp:AutoPlay", "候选解析失败: ${e.message}")
+            return false
+        }
+
+        val best = GameAutoConfig.selectBestSwf(candidates) ?: return false
+        val keys = GameAutoConfig.detectActionKeys(pageText.orEmpty())
+        val gameId = GameAutoConfig.gameIdFromUrl(pageUrl)
+        if (gameId != null) {
+            val prefix = "nono_game_${gameId}_"
+            PrefsManager.sp.edit()
+                .putString(prefix + "swf", best.url)
+                .putString(prefix + "keys", keys.joinToString(","))
+                .apply()
+        }
+        if (keys.isNotEmpty()) applyDetectedKeys(keys)
+
+        Log.d("WebApp:AutoPlay", "自动识别 game=$gameId swf=${best.url} keys=$keys")
+        handler.post {
+            Toast.makeText(context, "已自动识别游戏，正在进入…", Toast.LENGTH_SHORT).show()
+            openSwfOnMainThread(best.url, pageUrl)
+        }
+        return true
+    }
+
+    private fun applyDetectedKeys(keys: List<String>) {
+        val selected = keys.distinct().take(8)
+        if (selected.isEmpty()) return
+        val count = selected.size.coerceAtLeast(2)
+        val editor = PrefsManager.sp.edit().putInt("gamepad_key_count", count)
+        for (i in 0 until count) {
+            if (i < selected.size) {
+                editor.putString("gamepad_key_${i + 1}", selected[i])
+                editor.putBoolean("gamepad_key_${i + 1}_visible", true)
+            } else {
+                editor.putBoolean("gamepad_key_${i + 1}_visible", false)
+            }
+        }
+        for (i in count until 18) {
+            editor.putBoolean("gamepad_key_${i + 1}_visible", false)
+        }
+        editor.apply()
+
+        handler.post {
+            (context as? Activity)
+                ?.findViewById<ActionButtonView>(R.id.actionButtons)
+                ?.apply {
+                    visibility = android.view.View.VISIBLE
+                    requestLayout()
+                    invalidate()
+                }
+        }
+    }
+
+    private fun openSwfOnMainThread(swfUrl: String, pageUrl: String?) {
+        val playerUrl = NavHelper.playerUrl(swfUrl, pageUrl, null)
+        if (context is com.game4399.app.GameActivity) {
+            context.loadSwfInWebView(playerUrl)
         }
     }
 
