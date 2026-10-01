@@ -165,7 +165,10 @@ class WebAppInterface(private val context: Context) {
     }
 
     private fun openSwfOnMainThread(swfUrl: String, pageUrl: String?) {
-        val playerUrl = NavHelper.playerUrl(swfUrl, pageUrl, null)
+        // 统一在真正进入播放器前解开 4399 的 swf.htm?gamepath=... 包装。
+        // 这样旧版本已经缓存的错误包装 URL 也会自动自愈，无需清数据或重装。
+        val normalizedSwfUrl = GameAutoConfig.normalizeSwfUrl(swfUrl)
+        val playerUrl = NavHelper.playerUrl(normalizedSwfUrl, pageUrl, null)
         if (context is com.game4399.app.GameActivity) {
             context.loadSwfInWebView(playerUrl)
         }
