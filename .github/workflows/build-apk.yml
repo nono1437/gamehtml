@@ -1,9 +1,8 @@
 # 4399 游戏盒 - APK 构建 Workflow
 #
-# 触发方式：手动触发（GitHub 仓库 → Actions → Build APK → Run workflow）
-#
-# 本 workflow 只在手动触发时运行，不会消耗额外的 Actions 额度。
-# 公开仓库 Actions 完全免费；私有仓库每月 2000 分钟免费额度。
+# 触发方式：
+# 1) 手动触发（GitHub 仓库 → Actions → Build APK → Run workflow）
+# 2) nono 二改分支 push 时自动跑单测 + Debug APK，方便手机端持续验收
 
 name: Build APK
 
@@ -19,6 +18,9 @@ on:
           - debug
           - release
           - both
+  push:
+    branches:
+      - nono-4399-qol
 
 concurrency:
   group: build-apk-${{ github.ref }}
@@ -43,8 +45,6 @@ jobs:
           java-version: '17'
 
       # ---------- 3. 验证 Android SDK（ubuntu-latest 已预装） ----------
-      # ubuntu-latest 镜像已预装 Android SDK 35 和 build-tools 35.0.0
-      # 无需再用 android-actions/setup-android（该 action 在 v3 版本对多包名解析有 bug）
       - name: Verify Android SDK
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME"
@@ -56,7 +56,6 @@ jobs:
           echo "=== 已安装的 build-tools ==="
           ls -la "$ANDROID_HOME/build-tools/" 2>/dev/null || echo "build-tools 目录不存在"
           echo ""
-          # 如果缺少 android-35，则用 sdkmanager 单独安装（单包名调用，避免多包名解析 bug）
           if [ ! -d "$ANDROID_HOME/platforms/android-35" ]; then
             echo "android-35 缺失，正在安装..."
             yes | sdkmanager "platforms;android-35" > /dev/null 2>&1 || true
@@ -71,9 +70,6 @@ jobs:
           ls "$ANDROID_HOME/build-tools/" 2>/dev/null
 
       # ---------- 4. 生成 Gradle Wrapper ----------
-      # 说明：ubuntu-latest 镜像通过系统级 init 脚本把 AGP 8.1.0 注入 buildscript classpath，
-      # 改 GRADLE_USER_HOME 无法绕过。因此项目已锁定 AGP 8.1.0（见 libs.versions.toml），
-      # 声明相同版本即不冲突。
       - name: Generate Gradle Wrapper
         run: |
           echo "=== 诊断：预装的 Gradle init 脚本 ==="
@@ -95,9 +91,11 @@ jobs:
           chmod +x gradlew
           ./gradlew --version
 
-      # ---------- 5. 准备 Release 签名 ----------
-      # 没有配置签名 Secrets 时不生成 keystore.properties，
-      # build.gradle.kts 会自动用内置的 debug.keystore 签名（可用 MT 管理器重新签名）
+      # ---------- 5. 单元测试 ----------
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest --stacktrace
+
+      # ---------- 6. 准备 Release 签名 ----------
       - name: Prepare signing key
         env:
           SIGNING_KEY_BASE64: ${{ secrets.SIGNING_KEY_BASE64 }}
@@ -107,7 +105,6 @@ jobs:
         run: |
           if [ -z "$SIGNING_KEY_BASE64" ]; then
             echo "未配置签名 Secrets，使用内置 debug.keystore 签名（可用 MT 管理器重新签名）"
-            # 不生成 keystore.properties，让 build.gradle.kts 回退到内置 debug.keystore
           else
             echo "检测到签名 Secrets，解码 keystore..."
             echo "$SIGNING_KEY_BASE64" | base64 -d > app/release.keystore
@@ -120,17 +117,17 @@ jobs:
             echo "✓ keystore.properties 已生成"
           fi
 
-      # ---------- 6. 构建 Debug APK ----------
+      # ---------- 7. 构建 Debug APK ----------
       - name: Build Debug APK
-        if: ${{ inputs.build_type == 'debug' || inputs.build_type == 'both' }}
+        if: ${{ github.event_name == 'push' || inputs.build_type == 'debug' || inputs.build_type == 'both' }}
         run: ./gradlew assembleDebug --stacktrace
 
-      # ---------- 7. 构建 Release APK ----------
+      # ---------- 8. 构建 Release APK ----------
       - name: Build Release APK
-        if: ${{ inputs.build_type == 'release' || inputs.build_type == 'both' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && (inputs.build_type == 'release' || inputs.build_type == 'both') }}
         run: ./gradlew assembleRelease --stacktrace
 
-      # ---------- 8. 收集 APK ----------
+      # ---------- 9. 收集 APK ----------
       - name: Collect APKs
         run: |
           echo "=== 构建产物 ==="
@@ -152,9 +149,9 @@ jobs:
           echo "=== artifacts 目录 ==="
           ls -lh artifacts/ 2>/dev/null || echo "artifacts 为空"
 
-      # ---------- 9. 上传 Artifact ----------
+      # ---------- 10. 上传 Artifact ----------
       - name: Upload Debug APK
-        if: ${{ inputs.build_type == 'debug' || inputs.build_type == 'both' }}
+        if: ${{ github.event_name == 'push' || inputs.build_type == 'debug' || inputs.build_type == 'both' }}
         uses: actions/upload-artifact@v4
         with:
           name: Game4399-debug
@@ -163,7 +160,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload Release APK
-        if: ${{ inputs.build_type == 'release' || inputs.build_type == 'both' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && (inputs.build_type == 'release' || inputs.build_type == 'both') }}
         uses: actions/upload-artifact@v4
         with:
           name: Game4399-release
@@ -171,12 +168,12 @@ jobs:
           retention-days: 90
           if-no-files-found: warn
 
-      # ---------- 10. 构建摘要 ----------
+      # ---------- 11. 构建摘要 ----------
       - name: Summary
         if: always()
         run: |
           echo "## 构建结果" >> $GITHUB_STEP_SUMMARY
-          echo "- 构建类型: \`${{ inputs.build_type }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- 触发方式: \`${{ github.event_name }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- 提交: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           if [ -d artifacts ] && [ "$(ls -A artifacts 2>/dev/null)" ]; then
             echo "### 产物" >> $GITHUB_STEP_SUMMARY
