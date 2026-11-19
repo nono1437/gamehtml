@@ -37,12 +37,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ---------- 2. 应用 nono 二改补丁 ----------
-      - name: Apply nono QoL patch
-        run: |
-          git apply --recount --check .nono/4399-qol.patch
-          git apply --recount .nono/4399-qol.patch
-
       # ---------- 3. 配置 JDK 17 ----------
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -62,13 +56,13 @@ jobs:
           echo "=== 已安装的 build-tools ==="
           ls -la "$ANDROID_HOME/build-tools/" 2>/dev/null || echo "build-tools 目录不存在"
           echo ""
-          if [ ! -d "$ANDROID_HOME/platforms/android-35" ]; then
-            echo "android-35 缺失，正在安装..."
-            yes | sdkmanager "platforms;android-35" > /dev/null 2>&1 || true
+          if [ ! -d "$ANDROID_HOME/platforms/android-34" ]; then
+            echo "android-34 缺失，正在安装..."
+            yes | sdkmanager "platforms;android-34" > /dev/null 2>&1
           fi
-          if [ ! -d "$ANDROID_HOME/build-tools/35.0.0" ]; then
-            echo "build-tools;35.0.0 缺失，正在安装..."
-            yes | sdkmanager "build-tools;35.0.0" > /dev/null 2>&1 || true
+          if [ ! -d "$ANDROID_HOME/build-tools/34.0.0" ]; then
+            echo "build-tools;34.0.0 缺失，正在安装..."
+            yes | sdkmanager "build-tools;34.0.0" > /dev/null 2>&1
           fi
           echo ""
           echo "=== 最终验证 ==="
@@ -163,7 +157,7 @@ jobs:
           name: Game4399-debug
           path: artifacts/*-debug*.apk
           retention-days: 90
-          if-no-files-found: warn
+          if-no-files-found: error
 
       - name: Upload Release APK
         if: ${{ github.event_name == 'workflow_dispatch' && (inputs.build_type == 'release' || inputs.build_type == 'both') }}

@@ -46,9 +46,7 @@ class WebAppInterface(private val context: Context) {
     }
 
     @JavascriptInterface
-    fun log(tag: String?, msg: String?) {
-        Log.d("WebApp:${tag ?: "JS"}", msg ?: "")
-    }
+    fun log(tag: String?, msg: String?) = Unit
 
     /**
      * 打开 SWF 播放器（WAFlash 检测脚本调用）。
@@ -57,7 +55,6 @@ class WebAppInterface(private val context: Context) {
     @JavascriptInterface
     fun openSwf(swfUrl: String?, pageUrl: String?) {
         if (swfUrl.isNullOrEmpty()) return
-        Log.d("WebApp:WAFlash", "openSwf: $swfUrl (from: $pageUrl)")
         handler.post { openSwfOnMainThread(swfUrl, pageUrl) }
     }
 
@@ -81,7 +78,6 @@ class WebAppInterface(private val context: Context) {
             PrefsManager.sp.edit().putString(prefix + "keys", keys.joinToString(",")).apply()
         }
         if (keys.isNotEmpty()) applyDetectedKeys(keys)
-        Log.d("WebApp:AutoPlay", "缓存命中 game=$gameId swf=$swfUrl keys=$keys")
         handler.post { openSwfOnMainThread(swfUrl, page) }
         return true
     }
@@ -127,7 +123,6 @@ class WebAppInterface(private val context: Context) {
         }
         if (keys.isNotEmpty()) applyDetectedKeys(keys)
 
-        Log.d("WebApp:AutoPlay", "自动识别 game=$gameId swf=${best.url} keys=$keys")
         handler.post {
             Toast.makeText(context, "已自动识别游戏，正在进入…", Toast.LENGTH_SHORT).show()
             openSwfOnMainThread(best.url, pageUrl)
@@ -186,7 +181,6 @@ class WebAppInterface(private val context: Context) {
     @JavascriptInterface
     fun onSwfFound(json: String?) {
         if (json.isNullOrEmpty()) return
-        Log.d("WebApp:SwfExtract", "发现 SWF: $json")
         swfExtractCallback?.let { cb ->
             handler.post { cb(json) }
         }
@@ -200,14 +194,12 @@ class WebAppInterface(private val context: Context) {
     fun readLocalSwf(uri: String?): String? {
         if (uri.isNullOrEmpty()) return null
         return try {
-            Log.d("WebApp:LocalSwf", "读取本地文件: $uri")
             val parsed = android.net.Uri.parse(uri)
             val data = context.contentResolver.openInputStream(parsed)?.use { it.readBytes() }
                 ?: throw java.io.IOException("无法打开文件流")
             Log.d("WebApp:LocalSwf", "读取完成: ${data.size} bytes")
             android.util.Base64.encodeToString(data, android.util.Base64.NO_WRAP)
         } catch (e: Exception) {
-            Log.e("WebApp:LocalSwf", "读取失败: ${e.message}")
             null
         }
     }

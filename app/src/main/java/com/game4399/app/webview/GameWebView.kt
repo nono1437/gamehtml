@@ -49,6 +49,10 @@ open class GameWebView @JvmOverloads constructor(
     /** 是否正在拖动旋转视角 */
     private var cameraDragging = false
 
+    /** 最近一次直接触摸游戏区域的位置，供虚拟鼠标左右键使用。 */
+    private var lastPointerX = Float.NaN
+    private var lastPointerY = Float.NaN
+
     /**
      * 当前通过虚拟手柄按下的按键集合（Android KeyCode）。
      * 用于在页面导航、Activity 暂停、手柄隐藏时统一释放，
@@ -126,6 +130,10 @@ open class GameWebView @JvmOverloads constructor(
 
     // ---------------- 触屏 ----------------
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked != MotionEvent.ACTION_CANCEL && event.pointerCount > 0) {
+            lastPointerX = event.getX(0)
+            lastPointerY = event.getY(0)
+        }
         gestureDetector.onTouchEvent(event)
         if (event.action == MotionEvent.ACTION_DOWN) performClick()
 
@@ -364,6 +372,15 @@ open class GameWebView @JvmOverloads constructor(
     }
 
     // ---------------- 鼠标事件注入 ----------------
+
+    private fun pointerX(): Float = if (lastPointerX.isNaN()) width / 2f else lastPointerX.coerceIn(0f, width.toFloat())
+    private fun pointerY(): Float = if (lastPointerY.isNaN()) height / 2f else lastPointerY.coerceIn(0f, height.toFloat())
+
+    /** 虚拟鼠标键不再拿按钮自身坐标点击网页，而是点击最近一次触摸的游戏位置。 */
+    fun injectMouseLeftClickAtPointer() = injectMouseLeftClick(pointerX(), pointerY())
+    fun injectMouseRightClickAtPointer() = injectMouseRightClick(pointerX(), pointerY())
+    fun injectMouseLeftDownAtPointer() = injectMouseLeftDown(pointerX(), pointerY())
+    fun injectMouseLeftUpAtPointer() = injectMouseLeftUp(pointerX(), pointerY())
 
     /** 在 WebView 中心坐标注入鼠标移动事件（用于旋转视角） */
     fun injectMouseMove(dx: Float, dy: Float) {

@@ -53,9 +53,10 @@ class HomeFragment : Fragment() {
             val ivIcon = card.findViewById<android.widget.ImageView>(R.id.ivIcon)
             tvLabel.text = label
             ivIcon.setImageResource(when (index) {
-                0 -> R.drawable.ic_home
-                1 -> R.drawable.ic_game
-                2 -> R.drawable.ic_star
+                0 -> R.drawable.ic_game
+                1 -> R.drawable.ic_home
+                2 -> R.drawable.ic_game
+                3 -> R.drawable.ic_star
                 else -> R.drawable.ic_category
             })
             card.setOnClickListener {

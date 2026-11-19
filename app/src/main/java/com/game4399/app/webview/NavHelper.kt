@@ -28,7 +28,7 @@ object NavHelper {
 
     /** 判断是否为 SWF 资源 */
     fun isSwf(url: String): Boolean =
-        url.endsWith(".swf", ignoreCase = true) || url.contains(".swf?", ignoreCase = true)
+        Uri.parse(url).path?.endsWith(".swf", ignoreCase = true) == true
 
     /** 判断是否为本地文件 URI（content:// 或 file://） */
     fun isLocalFile(url: String): Boolean =
@@ -36,34 +36,45 @@ object NavHelper {
 
     /** 构造内置 Flash 播放器地址（根据引擎选择不同播放器页面） */
     fun playerUrl(swfUrl: String, base: String? = null, title: String? = null): String {
-        // WAFlash 引擎使用独立的 waflash.html 页面（canvas 渲染 + ES module）
-        // 从 flash.local 虚拟域名加载，确保 Emscripten 的 fetch/XHR 能正常工作
-        if (PrefsManager.flashEngine == "waflash") {
-            val u = Uri.parse("https://flash.local/waflash.html")
-                .buildUpon()
-                .appendQueryParameter("swf", swfUrl)
-            base?.let { u.appendQueryParameter("base", it) }
-            title?.let { u.appendQueryParameter("title", it) }
-            return u.build().toString()
+        val seer2 = Seer2Assets.isLauncher(swfUrl)
+        val engine = if (seer2) seer2Engine else PrefsManager.flashEngine
+        val playback = when {
+            seer2 -> Seer2Assets.MOVIE
+            engine == "waflash" -> swfUrl
+            else -> RemoteSwfProxy.wrap(swfUrl)
         }
+        val resourceBase = when {
+            seer2 -> Seer2Assets.BASE
+            swfUrl.startsWith(GameWebViewClient.LOCAL_MOVIE_URL) -> "https://flash.local/_local/"
+            else -> base?.takeUnless { Uri.parse(it).host == "flash.local" }
+                ?: runCatching { java.net.URL(java.net.URL(swfUrl), ".").toString() }.getOrNull()
+        }
+        val player = if (engine == "waflash") "waflash.html" else "player.html"
+        return Uri.parse("https://flash.local/$player").buildUpon()
+            .appendQueryParameter("swf", playback)
+            .apply {
+                resourceBase?.let { appendQueryParameter("base", it) }
+                base?.let { appendQueryParameter("referer", it) }
+                (title ?: if (seer2) "约瑟传说" else null)?.let { appendQueryParameter("title", it) }
+                if (seer2) appendQueryParameter("profile", "seer2")
+                if (engine != "waflash") {
+                    appendQueryParameter("engine", engine)
+                    appendQueryParameter("autoplay", if (seer2 || PrefsManager.isFlashAutoplay) "on" else "off")
+                    if (engine != "swf2js" && !seer2) {
+                        appendQueryParameter("cdn", RuffleInjector.scriptUrl())
+                        appendQueryParameter("path", RuffleInjector.publicPath())
+                    }
+                }
+            }.build().toString()
+    }
 
-        // Ruffle / swf2js 使用 player.html。
-        // 远程 SWF 先包装成 flash.local 同源代理，避免 WebView/Ruffle 跨域 fetch 被 CORS 阻断。
-        val playbackSwfUrl = RemoteSwfProxy.wrap(swfUrl)
-        val u = Uri.parse("https://flash.local/player.html")
-            .buildUpon()
-            .appendQueryParameter("swf", playbackSwfUrl)
-            .appendQueryParameter("engine", PrefsManager.flashEngine)
-            .appendQueryParameter("autoplay", if (PrefsManager.isFlashAutoplay) "on" else "off")
-        // Ruffle 模式传递 CDN/本地路径
-        // WAFlash 使用独立播放器页面，不需要传递 cdn/path
-        if (PrefsManager.flashEngine != "waflash" && PrefsManager.flashEngine != "swf2js") {
-            u.appendQueryParameter("cdn", RuffleInjector.scriptUrl())
-            u.appendQueryParameter("path", RuffleInjector.publicPath())
-        }
-        base?.let { u.appendQueryParameter("base", it) }
-        title?.let { u.appendQueryParameter("title", it) }
-        return u.build().toString()
+    internal val seer2Engine: String
+        get() = PrefsManager.sp.getString("seer2_flash_engine", "ruffle") ?: "ruffle"
+
+    internal fun isSeer2Player(url: String?): Boolean {
+        val uri = Uri.parse(url ?: return false)
+        return uri.scheme == "https" && uri.host == "flash.local" &&
+            uri.path in setOf("/player.html", "/waflash.html") && uri.getQueryParameter("profile") == "seer2"
     }
 
     /** 规范化用户输入：自动补 https://、识别纯数字为 4399 游戏 ID */

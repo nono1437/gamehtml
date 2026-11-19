@@ -112,7 +112,8 @@ class WebFragment : Fragment() {
         }
         override fun onSwfIntercepted(swfUrl: String, pageUrl: String) {
             // 直接启动游戏播放器
-            GameActivity.launch(requireContext(), swfUrl, "Flash 游戏", GameType.URL)
+            val title = if (com.game4399.app.webview.Seer2Assets.isLauncher(swfUrl)) "约瑟传说" else "Flash 游戏"
+            GameActivity.launch(requireContext(), swfUrl, title, GameType.URL)
         }
         override fun shouldInjectRuffle(url: String?): Boolean {
             if (url == null) return false
@@ -131,7 +132,6 @@ class WebFragment : Fragment() {
             // Flash 开启时，对所有网页注入 Flash 支持（不限 4399）
             return PrefsManager.isFlashEnabled
         }
-        override fun getCachedSwfPath(): String? = null
         override fun getLocalSwfUri(): String? = null
     }
 

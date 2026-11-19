@@ -1,5 +1,7 @@
 package com.game4399.app.data
 
+import com.game4399.app.webview.Seer2Assets
+
 /**
  * 经典 Flash 游戏内置列表（4399 经典 ID）。
  * 数据基于公开的 4399 游戏 URL 规则构造：flash/{id}.htm / play/{id}.htm
@@ -40,6 +42,7 @@ object GameRepository {
 
     /** 首页快捷入口（标题 → URL） */
     val quickUrls: List<Pair<String, String>> = listOf(
+        "约瑟传说" to Seer2Assets.ENTRY,
         "梦幻西游网页版" to "https://xyh5.163.com/game/?channel=netease",
         "4399 电脑版" to "https://www.4399.com/",
         "云原神" to "https://ys.mihoyo.com/cloud/m/#/",

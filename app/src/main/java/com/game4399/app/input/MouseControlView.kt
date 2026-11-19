@@ -160,8 +160,8 @@ class MouseControlView @JvmOverloads constructor(
                                 longPressTriggered = true
                                 // 长按：注入鼠标按下，进入旋转模式
                                 when (activeButton) {
-                                    1 -> targetWebView?.injectMouseLeftDown(downX, downY)
-                                    2 -> targetWebView?.injectMouseRightClick(downX, downY)
+                                    1 -> targetWebView?.injectMouseLeftDownAtPointer()
+                                    2 -> targetWebView?.injectMouseRightClickAtPointer()
                                 }
                                 lastMoveX = downX
                                 lastMoveY = downY
@@ -194,7 +194,7 @@ class MouseControlView @JvmOverloads constructor(
                     if (longPressTriggered) {
                         // 长按松开：注入鼠标松开
                         when (activeButton) {
-                            1 -> targetWebView?.injectMouseLeftUp(event.x, event.y)
+                            1 -> targetWebView?.injectMouseLeftUpAtPointer()
                         }
                         if (isDragging) {
                             // 拖动结束，不需要额外点击
@@ -204,8 +204,8 @@ class MouseControlView @JvmOverloads constructor(
                     } else {
                         // 短按：单击
                         when (activeButton) {
-                            1 -> targetWebView?.injectMouseLeftClick(event.x, event.y)
-                            2 -> targetWebView?.injectMouseRightClick(event.x, event.y)
+                            1 -> targetWebView?.injectMouseLeftClickAtPointer()
+                            2 -> targetWebView?.injectMouseRightClickAtPointer()
                         }
                     }
                     leftPressed = false

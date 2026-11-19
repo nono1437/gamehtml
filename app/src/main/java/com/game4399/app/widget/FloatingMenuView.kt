@@ -51,6 +51,9 @@ class FloatingMenuView @JvmOverloads constructor(
         fun onBack()
         fun onClose()
         fun onExtractSwf()
+        fun onFlashDiagnostics() {}
+        fun hasLocalResources(): Boolean = false
+        fun onChooseLocalResources() {}
     }
 
     private val triggerBtn: ImageButton
@@ -177,10 +180,14 @@ class FloatingMenuView @JvmOverloads constructor(
             MenuItem("页面缩放", R.drawable.ic_key) { callbacks?.onOpenPageZoom() },
             MenuItem("兼容模式", R.drawable.ic_key) { callbacks?.onOpenUaMode() },
             MenuItem("提取SWF", R.drawable.ic_key) { callbacks?.onExtractSwf() },
+            MenuItem("资源诊断", R.drawable.ic_key) { callbacks?.onFlashDiagnostics() },
             MenuItem(context.getString(R.string.refresh), R.drawable.ic_refresh) { callbacks?.onRefresh() },
             MenuItem(context.getString(R.string.back), R.drawable.ic_back) { callbacks?.onBack() },
             MenuItem(context.getString(R.string.close), R.drawable.ic_close) { callbacks?.onClose() }
-        )
+        ).toMutableList()
+        if (callbacks?.hasLocalResources() == true) {
+            items.add(9, MenuItem("本地资源目录", R.drawable.ic_key) { callbacks?.onChooseLocalResources() })
+        }
 
         // 构建按钮视图
         fun buildItemView(item: MenuItem): View {

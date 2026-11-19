@@ -2,7 +2,6 @@ package com.game4399.app.webview
 
 import android.graphics.Bitmap
 import android.net.Uri
-import android.util.Log
 import android.view.View
 import android.webkit.ConsoleMessage
 import android.webkit.GeolocationPermissions
@@ -66,7 +65,6 @@ open class GameWebChromeClient(
                 else -> "LOG"
             }
             callback.onConsole(level, it.message(), it.sourceId(), it.lineNumber())
-            Log.d("WebConsole", "$level ${it.message()} @ ${it.sourceId()}:${it.lineNumber()}")
         }
         return true
     }

@@ -54,6 +54,20 @@
     var SWF_URL = params.get('swf') || '';
     var BASE_URL = params.get('base') || '';
     var TITLE = params.get('title') || 'Flash 游戏';
+    if (params.get('profile') === 'seer2') {
+      document.addEventListener('securitypolicyviolation', function (event) {
+        if (event.effectiveDirective === 'connect-src') {
+          try {
+            var blocked = new URL(event.blockedURI);
+            console.warn('FlashDiagnostic blocked ' + blocked.origin + blocked.pathname);
+          } catch (_) {}
+        }
+      });
+      var policy = document.createElement('meta');
+      policy.httpEquiv = 'Content-Security-Policy';
+      policy.content = "connect-src 'self' https:";
+      document.head.appendChild(policy);
+    }
     document.title = TITLE;
 
     var statusEl = document.getElementById('waflashStatus');
@@ -120,9 +134,6 @@
       canvas.focus();
     }
 
-    // 判断是否为本地文件代理 URL（flash.local/local.swf），处理可能的时间戳参数
-    var isLocalFile = SWF_URL.split('?')[0] === 'https://flash.local/local.swf';
-
     if (!SWF_URL) {
       statusEl.textContent = '错误: 未指定 SWF URL';
     } else {
@@ -136,50 +147,33 @@
         var baseTag = document.createElement('base');
         baseTag.href = baseObj.origin + baseObj.pathname.substring(0, baseObj.pathname.lastIndexOf('/') + 1);
         document.head.appendChild(baseTag);
-        console.log('[WAF] base href: ' + baseTag.href);
       } catch(e) {}
     }
 
-    console.log('[WAF] SWF_URL: ' + SWF_URL);
-    console.log('[WAF] isLocalFile: ' + isLocalFile);
-
-    // 加载 WAFlash 引擎
-    function loadEngine(swfUrlToLoad) {
-      import('https://flash.local/waflash/waflash-player.min.js').then(function(module) {
-        console.log('[WAF] 引擎加载完成');
-        statusEl.textContent = '正在加载 SWF...';
-
-        var fn = (module && module.createWaflash) || window.createWaflash;
-        if (!fn) {
-          console.log('[WAF] createWaflash 未导出，可能已自动启动');
-          setTimeout(function() { statusEl.style.display = 'none'; }, 3000);
-          return;
-        }
-
-        try {
-          fn(swfUrlToLoad, { gpu: true });
-          console.log('[WAF] createWaflash 已调用: ' + swfUrlToLoad);
-          setTimeout(function() { statusEl.style.display = 'none'; }, 3000);
-        } catch(e) {
-          statusEl.textContent = '加载失败: ' + e.message;
-          console.error('[WAF] ' + e.message);
-        }
-      }).catch(function(err) {
-        statusEl.textContent = '引擎加载失败: ' + (err.message || err);
-        console.error('[WAF] 引擎: ' + (err.message || err));
-      });
+    function reportError(error) {
+      var type = error && error.name;
+      if (!/^(TypeError|ReferenceError|SyntaxError|RangeError|RuntimeError|SecurityError|NetworkError)$/.test(type)) {
+        type = 'Error';
+      }
+      console.error('FlashDiagnostic waflash.exception ' + type);
     }
 
-    if (isLocalFile) {
-      // 本地文件：SWF_URL 已被替换为 https://flash.local/local.swf
-      // shouldInterceptRequest 会拦截此 URL 并读取真实文件
-      // 直接传给 WAFlash 即可（WAFlash 的 fetch 能拦截 flash.local 的 HTTP 请求）
-      console.log('[WAF] 本地文件模式：虚拟 URL 代理');
-      loadEngine(SWF_URL);
-    } else {
-      // 远程 SWF：直接传 URL 给 WAFlash
-      loadEngine(SWF_URL);
+    window.addEventListener('error', function(event) { reportError(event.error); });
+    window.addEventListener('unhandledrejection', function(event) { reportError(event.reason); });
+
+    async function loadEngine() {
+      try {
+        var module = await import('https://flash.local/waflash/waflash-player.min.js');
+        statusEl.textContent = '正在加载 SWF…';
+        await module.createWaflash(SWF_URL, { gpu: true });
+      } catch (error) {
+        statusEl.style.display = 'block';
+        statusEl.textContent = 'WAFlash 加载失败，请查看资源诊断';
+        reportError(error);
+      }
     }
+
+    if (SWF_URL) loadEngine();
 
     document.addEventListener('contextmenu', function(e) { e.preventDefault(); });
     document.addEventListener('selectstart', function(e) { e.preventDefault(); });

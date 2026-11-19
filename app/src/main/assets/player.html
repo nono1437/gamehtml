@@ -57,9 +57,26 @@
     var BASE_URL   = param('base');
     var TITLE      = param('title') || 'Flash 游戏';
     var ENGINE     = param('engine', 'ruffle');
+    var IS_SEER2   = param('profile') === 'seer2';
     var CDN_URL    = param('cdn', '');
     var CDN_PATH   = param('path', '');
     var AUTOPLAY   = param('autoplay', 'on');
+
+    if (IS_SEER2) {
+      document.addEventListener('securitypolicyviolation', function (event) {
+        if (event.effectiveDirective === 'connect-src') {
+          try {
+            var blocked = new URL(event.blockedURI);
+            console.warn('FlashDiagnostic blocked ' + blocked.origin + blocked.pathname);
+          } catch (_) {}
+        }
+      });
+      // This profile relays public assets. Account traffic cannot use cleartext via the player.
+      var policy = document.createElement('meta');
+      policy.httpEquiv = 'Content-Security-Policy';
+      policy.content = "connect-src 'self' https:";
+      document.head.appendChild(policy);
+    }
 
     document.title = TITLE;
     var loadText = document.getElementById('loadText');
@@ -68,8 +85,8 @@
     // ===== Ruffle 引擎 =====
     loadText.textContent = '正在加载 Ruffle 引擎…';
 
-    var ruffleUrl = CDN_URL || 'https://flash.local/ruffle/ruffle.js';
-    var rufflePath = CDN_PATH || 'https://flash.local/ruffle/';
+    var ruffleUrl = (!IS_SEER2 && CDN_URL) || 'https://flash.local/ruffle/ruffle.js';
+    var rufflePath = (!IS_SEER2 && CDN_PATH) || 'https://flash.local/ruffle/';
 
     // 1) 预置 Ruffle 配置（必须早于 ruffle.js）
     window.RufflePlayer = window.RufflePlayer || {};
@@ -146,15 +163,24 @@
         player.style.margin = 'auto';
         var opt = { url: SWF_URL, allowScriptAccess: true };
         if (BASE_URL) opt.base = BASE_URL;
-        player.ruffle().load(opt);
-        document.getElementById('loading').style.display = 'none';
+        player.addEventListener('loadeddata', function () {
+          document.getElementById('loading').style.display = 'none';
+          console.info('FlashDiagnostic ruffle.root.ready');
+        }, { once: true });
+        player.ruffle().load(opt).then(function () {
+          document.getElementById('loading').style.display = 'none';
+        }, function () {
+          loadText.textContent = 'SWF 加载失败，请查看资源诊断';
+          console.error('FlashDiagnostic ruffle.root.error');
+        });
       } catch (e) {
         loadText.textContent = '加载失败: ' + e.message;
-        console.error(e);
+        console.error('FlashDiagnostic ruffle.root.error');
       }
     };
     s.onerror = function () {
       loadText.textContent = 'Ruffle 引擎加载失败，请检查网络';
+      console.error('FlashDiagnostic ruffle.root.error');
     };
     document.head.appendChild(s);
 

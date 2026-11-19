@@ -20,6 +20,10 @@ import com.game4399.app.data.GameType
 import com.game4399.app.data.PrefsManager
 import com.game4399.app.databinding.ActivityGameBinding
 import com.game4399.app.input.KeyMapper
+import com.game4399.app.webview.FlashDiagnostics
+import com.game4399.app.webview.FlashHttp
+import com.game4399.app.webview.FlashPayload
+import com.game4399.app.webview.Seer2Assets
 import com.game4399.app.webview.GameWebChromeClient
 import com.game4399.app.webview.GameWebView
 import com.game4399.app.webview.GameWebViewClient
@@ -60,6 +64,31 @@ class GameActivity : AppCompatActivity() {
     /** 本地 SWF 文件的真实 URI（shouldInterceptRequest 用它读取文件） */
     @Volatile var localSwfUri: String? = null
     private lateinit var floatingMenu: FloatingMenuView
+    @Volatile private var localResourceTree: Uri? = null
+    private val flashDiagnostics = FlashDiagnostics()
+
+    private val localResourcePicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { tree ->
+        if (tree != null) {
+            localResourceTree = tree
+            playLocalSwf(currentTitle)
+        }
+    }
+
+    private var pendingDiagnosticExport: String? = null
+    private val diagnosticExporter = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri ->
+        val report = pendingDiagnosticExport
+        pendingDiagnosticExport = null
+        if (uri != null && report != null) {
+            val saved = runCatching {
+                checkNotNull(contentResolver.openOutputStream(uri, "wt")).bufferedWriter(Charsets.UTF_8).use {
+                    it.write(report)
+                }
+            }.isSuccess
+            Toast.makeText(this, if (saved) "诊断日志已导出" else "诊断日志导出失败", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private val fileChooserLauncher = registerForActivityResult(
@@ -88,6 +117,7 @@ class GameActivity : AppCompatActivity() {
         applyOrientation()
         // 初始化鼠标光标
         isMouseEnabled = PrefsManager.isMouseEnabled
+        flashDiagnostics.enabled = PrefsManager.sp.getBoolean("flash_diagnostics", false)
         setupWebView()
         setupGamepad()
         setupToolbar()
@@ -109,7 +139,7 @@ class GameActivity : AppCompatActivity() {
     // ---------------- WebView ----------------
     private fun setupWebView() {
         webAppInterface = WebAppInterface(this)
-        gameWebViewClient = object : GameWebViewClient(viewClientCallback) {}
+        gameWebViewClient = object : GameWebViewClient(viewClientCallback, flashDiagnostics) {}
         webView.apply {
             addJavascriptInterface(webAppInterface, "Android")
             webChromeClient = object : GameWebChromeClient(chromeCallback) {}
@@ -158,7 +188,9 @@ class GameActivity : AppCompatActivity() {
         override fun onTitle(title: String?) {
             currentTitle = title?.takeIf { it.isNotBlank() } ?: currentTitle
         }
-        override fun onConsole(level: String, msg: String, sourceId: String?, line: Int) {}
+        override fun onConsole(level: String, msg: String, sourceId: String?, line: Int) {
+            flashDiagnostics.console(level, msg, sourceId, line)
+        }
         override fun onShowFullscreen(view: View, callback: WebChromeClient.CustomViewCallback) {
             // 网页全屏：隐藏 WebView，将全屏 View 添加到容器
             // 手柄控件和悬浮菜单位于全屏容器之上（XML 层级），无需隐藏
@@ -257,8 +289,8 @@ class GameActivity : AppCompatActivity() {
             // 适用于 mhhf.com 等其他 Flash 游戏网站
             return PrefsManager.isFlashEnabled
         }
-        override fun getCachedSwfPath(): String? = null
         override fun getLocalSwfUri(): String? = localSwfUri
+        override fun getLocalResourceTree(): Uri? = localResourceTree
     }
 
     private fun loadGame(url: String, title: String, type: GameType) {
@@ -266,8 +298,8 @@ class GameActivity : AppCompatActivity() {
         // 本地 SWF 文件 → 引擎选择后加载
         if (type == GameType.LOCAL_SWF || NavHelper.isLocalFile(url)) {
             localSwfUri = url  // 保存真实 URI，shouldInterceptRequest 用它读取文件
-            showLocalSwfEnginePicker(url, title)
-        } else if (NavHelper.isSwf(url)) {
+            showLocalSwfEnginePicker(title)
+        } else if (NavHelper.isSwf(url) || (PrefsManager.isFlashEnabled && Seer2Assets.isLauncher(url))) {
             // 远程 SWF 直链 → 内置播放器
             val playerUrl = NavHelper.playerUrl(url, base = null, title = title)
             webView.loadUrl(playerUrl)
@@ -285,7 +317,7 @@ class GameActivity : AppCompatActivity() {
     }
 
     /** 本地 SWF 引擎选择对话框 */
-    private fun showLocalSwfEnginePicker(url: String, title: String) {
+    private fun showLocalSwfEnginePicker(title: String) {
         val engines = arrayOf("WAFlash (推荐)", "Ruffle 最新版 (内置中文字体)")
         val values = arrayOf("waflash", "ruffle")
         val currentEngine = if (PrefsManager.flashEngine == "ruffle_mhhf") "ruffle" else PrefsManager.flashEngine
@@ -296,13 +328,15 @@ class GameActivity : AppCompatActivity() {
                 PrefsManager.sp.edit().putString("flash_engine", values[which]).apply()
                 PrefsManager.sp.edit().putBoolean("flash_enabled", true).apply()
                 dialog.dismiss()
-                // 加载本地 SWF
-                val swfProxyUrl = "https://flash.local/local.swf?t=${System.currentTimeMillis()}"
-                val playerUrl = NavHelper.playerUrl(swfProxyUrl, base = null, title = title)
-                webView.loadUrl(playerUrl)
+                playLocalSwf(title)
             }
             .setNegativeButton("取消", null)
             .show()
+    }
+
+    private fun playLocalSwf(title: String) {
+        val source = GameWebViewClient.LOCAL_MOVIE_URL
+        webView.loadUrl(NavHelper.playerUrl(source, title = title))
     }
 
     // ---------------- 虚拟手柄 ----------------
@@ -410,6 +444,12 @@ class GameActivity : AppCompatActivity() {
             override fun onBack() { if (webView.canGoBack()) webView.goBack() else finish() }
             override fun onClose() { finish() }
             override fun onExtractSwf() { extractSwfFromPage() }
+            override fun onFlashDiagnostics() { showFlashDiagnostics() }
+            override fun hasLocalResources() = localSwfUri != null &&
+                Uri.parse(webView.url.orEmpty()).getQueryParameter("swf")?.let {
+                    it == GameWebViewClient.LOCAL_MOVIE_URL || it.startsWith("https://flash.local/local.swf")
+                } == true
+            override fun onChooseLocalResources() { localResourcePicker.launch(null) }
         })
     }
 
@@ -527,45 +567,18 @@ class GameActivity : AppCompatActivity() {
         }
         progressDialog.show()
 
-        Thread {
+        val userAgent = webView.settings.userAgentString
+        val downloadThread = Thread {
+            var pendingFile: java.io.File? = null
             var conn: java.net.HttpURLConnection? = null
             var fileStream: java.io.FileOutputStream? = null
             try {
-                val swfUrlHttps = if (swfUrl.startsWith("http://")) "https://" + swfUrl.substring(7) else swfUrl
-                conn = java.net.URL(swfUrlHttps).openConnection() as java.net.HttpURLConnection
-                if (conn is javax.net.ssl.HttpsURLConnection) {
-                    val tm = object : javax.net.ssl.X509TrustManager {
-                        override fun checkClientTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
-                        override fun checkServerTrusted(chain: Array<out java.security.cert.X509Certificate>?, authType: String?) {}
-                        override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
-                    }
-                    val ctx = javax.net.ssl.SSLContext.getInstance("TLS")
-                    ctx.init(null, arrayOf(tm), java.security.SecureRandom())
-                    conn.sslSocketFactory = ctx.socketFactory
-                    conn.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
+                val publicAsset = Seer2Assets.publicAsset(swfUrl)
+                val cookies: ((String) -> String?)? = if (publicAsset != null) null else { address ->
+                    android.webkit.CookieManager.getInstance().getCookie(address)
                 }
-                conn.connectTimeout = 15000
-                conn.readTimeout = 30000
-                conn.requestMethod = "GET"
-                conn.instanceFollowRedirects = true
-                conn.setRequestProperty("User-Agent",
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                conn.setRequestProperty("Accept", "*/*")
-                conn.setRequestProperty("Accept-Encoding", "identity")
-                // 转发 Cookie（防盗链/登录态）
-                try {
-                    val cookies = android.webkit.CookieManager.getInstance().getCookie(swfUrlHttps)
-                    if (cookies != null && cookies.isNotEmpty()) {
-                        conn.setRequestProperty("Cookie", cookies)
-                    }
-                } catch(e: Exception) {}
-                // 使用页面 URL 作为 Referer（防盗链）
-                val referer = if (pageUrl.isNotEmpty() && pageUrl != swfUrl) pageUrl else {
-                    try { android.net.Uri.parse(swfUrlHttps).let { "${it.scheme}://${it.host}/" } } catch(e: Exception) { swfUrl }
-                }
-                conn.setRequestProperty("Referer", referer)
-                conn.connect()
-
+                conn = FlashHttp.open(publicAsset ?: swfUrl, pageUrl, userAgent, cookies = cookies,
+                    allowRedirect = { target -> publicAsset == null || Seer2Assets.publicAsset(target.toString()) != null })
                 if (conn.responseCode !in 200..299) {
                     runOnUiThread {
                         progressDialog.dismiss()
@@ -587,7 +600,8 @@ class GameActivity : AppCompatActivity() {
                 if (!swfDir.exists()) swfDir.mkdirs()
                 val file = java.io.File(swfDir, filename)
                 // 使用 .tmp 临时文件，下载完成后再重命名
-                val tmpFile = java.io.File(swfDir, "$filename.tmp")
+                val tmpFile = java.io.File.createTempFile("flash-", ".tmp", swfDir)
+                pendingFile = tmpFile
 
                 // 更新对话框：显示文件大小
                 runOnUiThread {
@@ -636,17 +650,12 @@ class GameActivity : AppCompatActivity() {
                 fileStream.close()
                 fileStream = null
 
-                if (totalRead == 0) {
-                    tmpFile.delete()
-                    runOnUiThread {
-                        progressDialog.dismiss()
-                        Toast.makeText(this, "下载失败: 文件为空", Toast.LENGTH_LONG).show()
-                    }
-                    return@Thread
+                val header = tmpFile.inputStream().use { it.readNBytesCompat(8) }
+                if (!FlashPayload.isSwf(header, totalRead.toLong()) ||
+                    (totalBytes >= 0 && totalBytes != totalRead)) {
+                    throw java.io.IOException("下载结果不是有效的 SWF 文件")
                 }
-
-                // 下载完成：重命名临时文件
-                tmpFile.renameTo(file)
+                if (!tmpFile.renameTo(file)) throw java.io.IOException("无法保存 SWF 文件")
 
                 val fileSizeKB = totalRead / 1024
                 runOnUiThread {
@@ -657,12 +666,9 @@ class GameActivity : AppCompatActivity() {
                         .setTitle("下载完成")
                         .setMessage("已保存到: ${file.absolutePath}\n\n是否用内置引擎播放？")
                         .setPositiveButton("播放") { _, _ ->
-                            val playerUrl = NavHelper.playerUrl(
-                                "https://flash.local/local.swf?t=${System.currentTimeMillis()}",
-                                base = null, title = filename
-                            )
-                            localSwfUri = android.net.Uri.fromFile(file).toString()
-                            webView.loadUrl(playerUrl)
+                            localResourceTree = null
+                            localSwfUri = Uri.fromFile(file).toString()
+                            playLocalSwf(filename)
                         }
                         .setNegativeButton("关闭", null)
                         .show()
@@ -675,8 +681,67 @@ class GameActivity : AppCompatActivity() {
                 }
             } finally {
                 conn?.disconnect()
+                pendingFile?.delete()
             }
-        }.start()
+        }
+        progressDialog.setOnCancelListener { downloadThread.interrupt() }
+        downloadThread.start()
+    }
+
+    private fun java.io.InputStream.readNBytesCompat(count: Int): ByteArray {
+        val bytes = ByteArray(count)
+        val actual = readBytesUpTo(bytes)
+        return if (actual == count) bytes else bytes.copyOf(actual)
+    }
+
+    private fun java.io.InputStream.readBytesUpTo(bytes: ByteArray): Int {
+        var offset = 0
+        while (offset < bytes.size) {
+            val read = read(bytes, offset, bytes.size - offset)
+            if (read == -1) break
+            offset += read
+        }
+        return offset
+    }
+
+    private fun showFlashDiagnostics() {
+        val text = android.widget.TextView(this).apply {
+            setTextIsSelectable(true)
+            typeface = android.graphics.Typeface.MONOSPACE
+            setPadding(24, 12, 24, 12)
+        }
+        val scroll = android.widget.ScrollView(this).apply { addView(text) }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Flash 资源诊断")
+            .setView(scroll)
+            .setPositiveButton("导出") { _, _ ->
+                pendingDiagnosticExport = flashDiagnostics.snapshot()
+                diagnosticExporter.launch("flash-diagnostics.txt")
+            }
+            .setNegativeButton("关闭", null)
+            .setNeutralButton(if (flashDiagnostics.enabled) "停止记录" else "开始记录", null)
+            .create()
+        dialog.setOnShowListener {
+            val toggle = dialog.getButton(android.content.DialogInterface.BUTTON_NEUTRAL)
+            toggle.setOnClickListener {
+                flashDiagnostics.enabled = !flashDiagnostics.enabled
+                PrefsManager.sp.edit().putBoolean("flash_diagnostics", flashDiagnostics.enabled).apply()
+                toggle.text = if (flashDiagnostics.enabled) "停止记录" else "开始记录"
+                if (flashDiagnostics.enabled) {
+                    flashDiagnostics.clear()
+                    Toast.makeText(this, "关闭面板后刷新游戏，可记录完整启动过程", Toast.LENGTH_SHORT).show()
+                }
+            }
+            text.post(object : Runnable {
+                override fun run() {
+                    if (!dialog.isShowing) return
+                    val snapshot = flashDiagnostics.snapshot()
+                    if (text.text.toString() != snapshot) text.text = snapshot
+                    text.postDelayed(this, 750)
+                }
+            })
+        }
+        dialog.show()
     }
 
     /** 横竖屏切换 */
@@ -849,14 +914,22 @@ class GameActivity : AppCompatActivity() {
             "关闭 Flash"
         )
         val values = arrayOf("ruffle", "waflash", "off")
-        val current = if (PrefsManager.isFlashEnabled) PrefsManager.flashEngine else "off"
+        val seer2 = NavHelper.isSeer2Player(webView.url)
+        val current = when {
+            seer2 -> NavHelper.seer2Engine
+            PrefsManager.isFlashEnabled -> PrefsManager.flashEngine
+            else -> "off"
+        }
         // 兼容旧版 mhhf 设置，自动迁移为 ruffle
         val migratedCurrent = if (current == "ruffle_mhhf") "ruffle" else current
         val checked = values.indexOf(migratedCurrent).coerceAtLeast(0)
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Flash 引擎")
             .setSingleChoiceItems(engines, checked) { dialog, which ->
-                if (which == 2) {
+                if (seer2 && which != 2) {
+                    sp.edit().putString("seer2_flash_engine", values[which]).apply()
+                    webView.loadUrl(NavHelper.playerUrl(Seer2Assets.ENTRY, title = "约瑟传说"))
+                } else if (which == 2) {
                     // "关闭 Flash" 是索引 2
                     sp.edit().putBoolean("flash_enabled", false).apply()
                     Toast.makeText(this, "Flash 已关闭", Toast.LENGTH_SHORT).show()
@@ -866,7 +939,13 @@ class GameActivity : AppCompatActivity() {
                         .putString("flash_engine", values[which])
                         .apply()
                     Toast.makeText(this, "Flash 引擎: ${engines[which].substringBefore(" (")}", Toast.LENGTH_SHORT).show()
-                    webView.reload()
+                    val active = Uri.parse(webView.url.orEmpty())
+                    val raw = active.getQueryParameter("swf")
+                    if (active.host == "flash.local" && raw != null) {
+                        val movie = com.game4399.app.webview.RemoteSwfProxy.unwrap(raw) ?: raw
+                        webView.loadUrl(NavHelper.playerUrl(movie,
+                            base = active.getQueryParameter("referer"), title = currentTitle))
+                    } else webView.reload()
                 }
                 dialog.dismiss()
             }
@@ -1300,9 +1379,9 @@ class GameActivity : AppCompatActivity() {
         super.onPause()
         // 释放所有虚拟手柄按下的按键，防止 Ruffle 角色持续移动
         webView.releaseAllKeys()
-        // 暂停 Flash/H5 游戏的 JS 定时器，省电
+        // 明确挂起 Ruffle：同时停止帧、脚本和声音，避免切后台后 BGM 继续播放
         runCatching { webView.evaluateJavascript(
-            "(function(){try{if(window.RufflePlayer){var r=window.RufflePlayer.newest();}}catch(e){}})();", null
+            "(function(){try{if(window.__nonoSuspendRuffle){window.__nonoSuspendRuffle();return;}var ps=document.querySelectorAll('ruffle-player');for(var i=0;i<ps.length;i++){try{ps[i].ruffle(1).suspend();}catch(x){try{ps[i].pause();}catch(y){}}}}catch(e){}})();", null
         ) }
         webView.onPause()
     }
@@ -1310,6 +1389,9 @@ class GameActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         webView.onResume()
+        runCatching { webView.evaluateJavascript(
+            "(function(){try{if(window.__nonoResumeRuffle){window.__nonoResumeRuffle();return;}var ps=document.querySelectorAll('ruffle-player');for(var i=0;i<ps.length;i++){try{ps[i].ruffle(1).resume();}catch(x){try{ps[i].play();}catch(y){}}}}catch(e){}})();", null
+        ) }
         // 横竖屏切换或从后台返回后重新隐藏系统栏
         applyImmersiveFullscreen()
         // 同步视角旋转状态（从设置页面返回后恢复最新配置）

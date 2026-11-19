@@ -21,8 +21,8 @@ android {
         applicationId = "com.game4399.app"
         minSdk = 23
         targetSdk = 34
-        versionCode = 5
-        versionName = "3.3.2-nono"
+        versionCode = 6
+        versionName = "3.3.3-seer2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -92,6 +92,7 @@ dependencies {
     implementation(libs.material)
     implementation(libs.androidx.constraintlayout)
     implementation(libs.androidx.webkit)
+    implementation("androidx.documentfile:documentfile:1.0.1")
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.preference)
     implementation(libs.androidx.swiperefresh)
