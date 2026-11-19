@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Flash 游戏盒</string>
+    <string name="app_name_seer2_preview">游戏盒 · 约瑟测试版</string>
     <string name="app_subtitle">支持 Flash 的怀旧小游戏中心</string>
 
     <!-- 底部导航 -->

@@ -74,6 +74,20 @@ class FlashCompatibilityTest {
         assertNull(Seer2Assets.publicAsset("http://example.com/module/app/MapPanel.swf"))
     }
 
+    @Test fun assetCacheKeysRetainTheOfficialVersionButIgnoreTheLoaderRetrySuffix() {
+        val url = "http://seer2.61.com/module/app/MapPanel.swf"
+        val exact = Seer2Assets.versionedResourceKey("$url?j3yi414w")
+        assertEquals("/module/app/MapPanel.swf?j3yi414w", exact)
+        assertEquals(exact, Seer2Assets.versionedResourceKey("$url?j3yi414w?0.123456"))
+        assertEquals(exact, Seer2Assets.versionedResourceKey("$url?j3yi414w&42"))
+        assertEquals("/module/app/MapPanel.swf?j3yi41wo", Seer2Assets.versionedResourceKey("$url?j3yi41wo"))
+        for (address in listOf(url, "$url?0.123", "$url?token=test",
+            "http://sr2login.61.com/ip.txt?v=0.123", "http://seer2.61.com/config/Server.xml?j3yi414w",
+            "http://example.com/module/app/MapPanel.swf?j3yi414w")) {
+            assertNull(address, Seer2Assets.versionedResourceKey(address))
+        }
+    }
+
     @Test fun validatesOfficialFrameSequencesWithSwfFileNames() {
         val png = Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jZ1sAAAAASUVORK5CYII=")
         val metadata = byteArrayOf(10, 11, 1, 3, 105, 6, 7, 49, 44, 49, 3, 108, 6, 3, 97, 1)

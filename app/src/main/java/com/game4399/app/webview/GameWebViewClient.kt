@@ -81,7 +81,10 @@ open class GameWebViewClient(
                     diagnostics.record("已阻止资源（$reason）", url, 403)
                     return assetResponse(403)
                 }
-                return interceptRemote(upstream, request, Seer2Assets.ENTRY, seer2 = true)
+                val cache = if (NavHelper.isSeer2Player(source) && !discovery) {
+                    File(view.context.cacheDir, "seer2-assets")
+                } else null
+                return interceptRemote(upstream, request, Seer2Assets.ENTRY, seer2 = true, resourceCache = cache)
             }
             RemoteSwfProxy.unwrap(url)?.let {
                 if (!isPlayer(source) || request.isForMainFrame) return assetResponse(403)
@@ -329,7 +332,13 @@ open class GameWebViewClient(
         }
     }
 
-    private fun interceptRemote(url: String, request: WebResourceRequest, source: String?, seer2: Boolean = false): WebResourceResponse {
+    private fun interceptRemote(
+        url: String,
+        request: WebResourceRequest,
+        source: String?,
+        seer2: Boolean = false,
+        resourceCache: File? = null
+    ): WebResourceResponse {
         val method = request.method
         if (method == "OPTIONS" && !seer2) return assetResponse(200, cors = "*")
         if (method != "GET") {
@@ -338,6 +347,13 @@ open class GameWebViewClient(
         }
 
         val started = SystemClock.elapsedRealtime()
+        val cacheKey = resourceCache?.let { Seer2Assets.versionedResourceKey(url) }
+        if (resourceCache != null && cacheKey != null) {
+            Seer2ResourceCache.read(resourceCache, cacheKey)?.let { data ->
+                diagnostics.record("使用本地资源缓存", url, 200, data.size.toLong(), SystemClock.elapsedRealtime() - started)
+                return assetResponse(200, data)
+            }
+        }
         val discovery = seer2 && Seer2Assets.isLoginDiscoveryUrl(url)
         val configPath = if (seer2) URL(url).path else null
         val acceptEndpoint = seer2SocketBridge?.receiverFor(pageUrl, configPath)
@@ -383,6 +399,11 @@ open class GameWebViewClient(
                 val valid = complete && if (seer2) Seer2Assets.validPayload(conn.url.path, data)
                     else FlashPayload.isSwf(data, data.size.toLong())
                 if (valid && conn.url.path == configPath) acceptEndpoint?.invoke(data)
+                if (valid && resourceCache != null && cacheKey != null &&
+                    Seer2Assets.versionedResourceKey(conn.url.toString()) == cacheKey) {
+                    Seer2ResourceCache.store(resourceCache, cacheKey, data, conn.getHeaderField("Cache-Control"),
+                        conn.getHeaderField("Age")?.toLongOrNull() ?: 0L)
+                }
                 val outcome = when {
                     !complete -> "资源下载不完整"
                     !valid -> "资源格式无效"

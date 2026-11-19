@@ -12,6 +12,7 @@ val keystoreProperties = Properties().apply {
     if (f.exists()) load(FileInputStream(f))
 }
 val hasReleaseKeystore = keystoreProperties.containsKey("storeFile")
+val seer2Preview = providers.gradleProperty("seer2Preview").getOrElse("false").toBoolean()
 
 android {
     namespace = "com.game4399.app"
@@ -21,8 +22,9 @@ android {
         applicationId = "com.game4399.app"
         minSdk = 23
         targetSdk = 34
-        versionCode = 13
-        versionName = "3.3.10-seer2"
+        versionCode = 14
+        versionName = "3.3.11-seer2"
+        manifestPlaceholders["appLabel"] = "@string/app_name"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -61,8 +63,9 @@ android {
         }
         debug {
             isMinifyEnabled = false
-            applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
+            applicationIdSuffix = if (seer2Preview) ".seer2preview" else ".debug"
+            versionNameSuffix = if (seer2Preview) "-preview" else "-debug"
+            if (seer2Preview) manifestPlaceholders["appLabel"] = "@string/app_name_seer2_preview"
             // 固定使用仓库内 debug.keystore，避免不同 Actions runner 生成不同签名导致无法覆盖安装
             signingConfig = signingConfigs.getByName("ci")
         }

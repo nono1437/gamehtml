@@ -18,6 +18,10 @@ on:
           - debug
           - release
           - both
+      seer2_preview:
+        description: 使用可独立安装的约瑟测试版包名构建 Debug APK
+        type: boolean
+        default: false
   push:
     branches:
       - nono-4399-qol
@@ -31,6 +35,8 @@ jobs:
     name: Build APK
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      ORG_GRADLE_PROJECT_seer2Preview: ${{ inputs.seer2_preview || false }}
 
     steps:
       # ---------- 1. 检出代码 ----------

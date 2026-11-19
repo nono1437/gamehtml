@@ -78,11 +78,22 @@ internal object Seer2Assets {
     }
 
     private fun isCacheKey(query: String): Boolean {
-        if (cacheKey.matches(query)) return true
+        return cacheKey.matches(query) || resourceVersion(query) != null
+    }
+
+    private fun resourceVersion(query: String): String? {
         // The version manager emits a base-36 timestamp; AssetsLoader appends '?' and Math.random().
-        val timestamp = timestampCacheKey.matchEntire(query)?.groupValues?.get(1)?.toLongOrNull(36)
-            ?: return false
-        return timestamp in assetTimestampRange && timestamp % 1000L == 0L
+        val version = timestampCacheKey.matchEntire(query)?.groupValues?.get(1) ?: return null
+        val timestamp = version.toLong(36)
+        return version.takeIf { timestamp in assetTimestampRange && timestamp % 1000L == 0L }
+    }
+
+    fun versionedResourceKey(address: String): String? {
+        val canonical = publicAsset(address) ?: return null
+        val path = canonical.removePrefix(ORIGIN).substringBefore('?')
+        if (!path.startsWith("/module/") && !path.startsWith("/res/")) return null
+        val version = resourceVersion(canonical.substringAfter('?', "")) ?: return null
+        return "$path?$version"
     }
 
     fun validPayload(path: String, data: ByteArray): Boolean = when {
