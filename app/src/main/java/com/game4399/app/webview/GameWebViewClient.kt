@@ -73,7 +73,9 @@ open class GameWebViewClient(
             val source = pageUrl
             if (path.startsWith(Seer2Assets.PREFIX)) {
                 val upstream = Seer2Assets.upstream(uri.encodedPath.orEmpty(), uri.encodedQuery)
-                if (upstream == null || !isPlayer(source) || request.isForMainFrame) {
+                val discovery = path.startsWith(Seer2Assets.DISCOVERY_PREFIX)
+                val player = if (discovery) NavHelper.isSeer2Player(source) else isPlayer(source)
+                if (upstream == null || !player || request.isForMainFrame) {
                     val reason = if (upstream == null) "地址或缓存参数无效" else "请求不在播放器子资源中"
                     diagnostics.record("已阻止资源（$reason）", url, 403)
                     return assetResponse(403)
@@ -299,7 +301,7 @@ open class GameWebViewClient(
                         ?.inputStream()
                 } else null
             }
-            stream?.use(::readAsset)
+            stream?.use { readAsset(it) }
         } catch (_: Exception) {
             null
         }
@@ -315,13 +317,13 @@ open class GameWebViewClient(
     }
 
     /** Buffer a complete, bounded asset so a truncated response never looks like a successful download. */
-    private fun readAsset(input: InputStream): ByteArray {
+    private fun readAsset(input: InputStream, limit: Int = 64 * 1024 * 1024): ByteArray {
         val output = ByteArrayOutputStream()
         val buffer = ByteArray(16 * 1024)
         while (true) {
             val count = input.read(buffer)
             if (count == -1) return output.toByteArray()
-            if (output.size() + count > 64 * 1024 * 1024) throw java.io.IOException("Asset too large")
+            if (output.size() + count > limit) throw java.io.IOException("Asset too large")
             output.write(buffer, 0, count)
         }
     }
@@ -335,6 +337,8 @@ open class GameWebViewClient(
         }
 
         val started = SystemClock.elapsedRealtime()
+        val discovery = seer2 && Seer2Assets.isLoginDiscoveryUrl(url)
+        if (discovery) diagnostics.record("查询登录服务器地址", url)
         var httpStatus: Int? = null
         try {
             val cookieLookup: ((String) -> String?)? = if (seer2) null else { address ->
@@ -351,19 +355,25 @@ open class GameWebViewClient(
                         millis = SystemClock.elapsedRealtime() - started)
                 },
                 allowRedirect = { target ->
-                    !seer2 || (target.host.equals("seer2.61.com", true) && target.port == -1 &&
-                        Seer2Assets.upstream(Seer2Assets.PREFIX + target.path.removePrefix("/"), target.query) != null)
+                    when {
+                        discovery -> FlashHttp.sameOrigin(URL(url), target) &&
+                            Seer2Assets.isLoginDiscoveryUrl(target.toString())
+                        seer2 -> Seer2Assets.publicAsset(target.toString()) != null
+                        else -> true
+                    }
                 }
             )
             try {
                 val status = conn.responseCode
                 httpStatus = status
                 if (status != 200) {
-                    diagnostics.record("下载失败", conn.url.toString(), status,
+                    diagnostics.record(if (discovery) "登录服务器地址查询失败" else "下载失败", conn.url.toString(), status,
                         millis = SystemClock.elapsedRealtime() - started)
                     return assetResponse(status.takeIf { it in 400..599 } ?: 502, cors = if (seer2) null else "*")
                 }
-                val data = conn.inputStream.use(::readAsset)
+                val data = conn.inputStream.use {
+                    if (discovery) readAsset(it, Seer2Assets.DISCOVERY_MAX_BYTES) else readAsset(it)
+                }
                 val expectedSize = conn.getHeaderField("Content-Length")?.toLongOrNull()
                 val complete = expectedSize == null || expectedSize == data.size.toLong()
                 val valid = complete && if (seer2) Seer2Assets.validPayload(conn.url.path, data)
@@ -371,6 +381,7 @@ open class GameWebViewClient(
                 val outcome = when {
                     !complete -> "资源下载不完整"
                     !valid -> "资源格式无效"
+                    discovery -> "登录服务器地址已交付"
                     else -> "下载并交付 WebView"
                 }
                 diagnostics.record(outcome, conn.url.toString(),
@@ -388,7 +399,8 @@ open class GameWebViewClient(
                 else -> "资源请求失败"
             }
             diagnostics.record(type, url, httpStatus, millis = SystemClock.elapsedRealtime() - started)
-            return assetResponse(502, cors = if (seer2) null else "*")
+            val status = if (discovery && error is java.net.SocketTimeoutException) 504 else 502
+            return assetResponse(status, cors = if (seer2) null else "*")
         }
     }
 

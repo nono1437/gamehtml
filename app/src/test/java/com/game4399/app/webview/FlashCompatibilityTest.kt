@@ -6,6 +6,24 @@ import java.net.URL
 import java.util.zip.DeflaterOutputStream
 
 class FlashCompatibilityTest {
+    @Test fun loginDiscoveryOnlyRoutesKnownPublicMetadataOverHttps() {
+        val route = "/_seer2/login-discovery/sr2login/ip.txt"
+        assertEquals("https://sr2login.61.com/ip.txt?v=0.123",
+            Seer2Assets.upstream(route, "v=0.123"))
+        assertEquals("https://ctsr2login.61.com/ip.txt",
+            Seer2Assets.upstream("/_seer2/login-discovery/ctsr2login/ip.txt", null))
+        assertEquals("https://cncsr2login.61.com/ip.txt?v=1e-7",
+            Seer2Assets.upstream("/_seer2/login-discovery/cncsr2login/ip.txt", "v=1e-7"))
+        assertNull(Seer2Assets.upstream(route, "v=0.1&token=test"))
+        assertNull(Seer2Assets.upstream("/_seer2/login-discovery/example/ip.txt", null))
+        assertNull(Seer2Assets.upstream("/_seer2/login-discovery/sr2login/login.txt", null))
+        assertNull(Seer2Assets.publicAsset("http://seer2.61.com/login-discovery/sr2login/ip.txt"))
+        assertTrue(Seer2Assets.validPayload("/ip.txt", "192.0.2.11:1863\r\n".toByteArray()))
+        assertFalse(Seer2Assets.validPayload("/ip.txt", "192.0.2.999:1863".toByteArray()))
+        assertFalse(Seer2Assets.validPayload("/ip.txt", "192.0.2.11:65536".toByteArray()))
+        assertFalse(Seer2Assets.validPayload("/ip.txt", "Network unavailable".toByteArray()))
+    }
+
     @Test fun officialVersionAndCacheBusterAreForwardedTogether() {
         val asset = "/_seer2/dll/Assets.swf"
         val query = "j3yi414w?0.6002201694063842"

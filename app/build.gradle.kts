@@ -21,8 +21,8 @@ android {
         applicationId = "com.game4399.app"
         minSdk = 23
         targetSdk = 34
-        versionCode = 7
-        versionName = "3.3.4-seer2"
+        versionCode = 8
+        versionName = "3.3.5-seer2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }

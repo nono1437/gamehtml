@@ -10,6 +10,8 @@ internal object Seer2Assets {
     const val PREFIX = "/_seer2/"
     const val BASE = "https://flash.local$PREFIX"
     const val MOVIE = "${BASE}Client.swf"
+    const val DISCOVERY_PREFIX = "${PREFIX}login-discovery/"
+    const val DISCOVERY_MAX_BYTES = 128
 
     private val safePath = Regex("""/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*""")
     private val cacheKey = Regex("""(?:[0-9.]{1,32}|(?:v|ver|version|t|r|_)=\w{1,32})""")
@@ -19,6 +21,9 @@ internal object Seer2Assets {
     private val packedDlls = setOf("/dll/TaomeeCoreDLL.swf", "/dll/ClientCoreDLL.swf", "/dll/ClientAppDLL.swf")
     private val assetDirectories = setOf("config", "version", "dll", "res")
     private val assetExtensions = setOf("swf", "xml", "txt", "json", "png", "jpg", "jpeg", "gif", "mp3", "ogg", "dat", "bin")
+    private val discoveryHosts = setOf("sr2login", "ctsr2login", "cncsr2login")
+    private val discoveryQuery = Regex("""v=(?:0(?:\.\d{1,24})?|[0-9](?:\.\d{1,24})?e-\d{1,2})""")
+    private val endpoint = Regex("""(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})""")
 
     fun isLauncher(url: String?): Boolean {
         val uri = runCatching { URI(url ?: return false) }.getOrNull() ?: return false
@@ -31,12 +36,31 @@ internal object Seer2Assets {
         val uri = runCatching { URI(url) }.getOrNull() ?: return null
         if (uri.scheme !in setOf("http", "https") || !uri.host.equals("seer2.61.com", true) ||
             uri.port != -1 || uri.rawUserInfo != null) return null
-        return upstream(PREFIX + uri.rawPath.orEmpty().removePrefix("/"), uri.rawQuery)
+        return staticAsset(uri.rawPath.orEmpty(), uri.rawQuery)
     }
 
     fun upstream(rawPath: String, rawQuery: String?): String? {
         if (!rawPath.startsWith(PREFIX)) return null
-        val path = "/" + rawPath.removePrefix(PREFIX)
+        if (rawPath.startsWith(DISCOVERY_PREFIX)) {
+            val host = rawPath.removePrefix(DISCOVERY_PREFIX).removeSuffix("/ip.txt")
+            if (host !in discoveryHosts || rawPath != "$DISCOVERY_PREFIX$host/ip.txt" ||
+                !validDiscoveryQuery(rawQuery)) return null
+            return "https://$host.61.com/ip.txt" + (rawQuery?.let { "?$it" } ?: "")
+        }
+        return staticAsset("/" + rawPath.removePrefix(PREFIX), rawQuery)
+    }
+
+    fun isLoginDiscoveryUrl(url: String): Boolean {
+        val uri = runCatching { URI(url) }.getOrNull() ?: return false
+        val host = uri.host?.removeSuffix(".61.com")
+        return uri.scheme == "https" && host in discoveryHosts && uri.host == "$host.61.com" &&
+            uri.port == -1 && uri.rawUserInfo == null && uri.rawFragment == null &&
+            uri.rawPath == "/ip.txt" && validDiscoveryQuery(uri.rawQuery)
+    }
+
+    private fun validDiscoveryQuery(query: String?): Boolean = query == null || discoveryQuery.matches(query)
+
+    private fun staticAsset(path: String, rawQuery: String?): String? {
         if (!safePath.matches(path) || path.split('/').any { it == "." || it == ".." }) return null
         if (path != "/Client.swf" && (path.split('/')[1] !in assetDirectories ||
                 path.substringAfterLast('.').lowercase() !in assetExtensions)) return null
@@ -53,6 +77,13 @@ internal object Seer2Assets {
     }
 
     fun validPayload(path: String, data: ByteArray): Boolean = when {
+        path == "/ip.txt" -> {
+            val match = if (data.size in 1..DISCOVERY_MAX_BYTES) {
+                endpoint.matchEntire(data.toString(Charsets.UTF_8).trim())
+            } else null
+            match != null && match.groupValues[1].split('.').all { it.toInt() in 0..255 } &&
+                match.groupValues[2].toInt() in 1..65535
+        }
         versionPath.matches(path) -> data.size > 8 &&
             data.copyOfRange(0, 4).contentEquals(byteArrayOf(1, 51, 83, 5)) && isZlib(data, 8)
         path in packedDlls -> FlashPayload.isSwf(data, data.size.toLong()) || isZlib(data, 7, true)
