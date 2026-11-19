@@ -13,6 +13,8 @@ internal object Seer2Assets {
 
     private val safePath = Regex("""/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*""")
     private val cacheKey = Regex("""(?:[0-9.]{1,32}|(?:v|ver|version|t|r|_)=\w{1,32})""")
+    private val timestampCacheKey = Regex("""([0-9a-z]{8,9})(?:\?(?:0(?:\.\d{1,24})?|[0-9](?:\.\d{1,24})?e-\d{1,2})|&\d{1,4})?""")
+    private val assetTimestampRange = 946684800000L..4102444800000L // 2000–2100, epoch milliseconds
     private val versionPath = Regex("""/version/version[0-9]{1,12}\.swf""")
     private val packedDlls = setOf("/dll/TaomeeCoreDLL.swf", "/dll/ClientCoreDLL.swf", "/dll/ClientAppDLL.swf")
     private val assetDirectories = setOf("config", "version", "dll", "res")
@@ -38,8 +40,16 @@ internal object Seer2Assets {
         if (!safePath.matches(path) || path.split('/').any { it == "." || it == ".." }) return null
         if (path != "/Client.swf" && (path.split('/')[1] !in assetDirectories ||
                 path.substringAfterLast('.').lowercase() !in assetExtensions)) return null
-        if (rawQuery != null && !cacheKey.matches(rawQuery)) return null
+        if (rawQuery != null && !isCacheKey(rawQuery)) return null
         return ORIGIN + path + (rawQuery?.let { "?$it" } ?: "")
+    }
+
+    private fun isCacheKey(query: String): Boolean {
+        if (cacheKey.matches(query)) return true
+        // The version manager emits a base-36 timestamp; AssetsLoader appends '?' and Math.random().
+        val timestamp = timestampCacheKey.matchEntire(query)?.groupValues?.get(1)?.toLongOrNull(36)
+            ?: return false
+        return timestamp in assetTimestampRange && timestamp % 1000L == 0L
     }
 
     fun validPayload(path: String, data: ByteArray): Boolean = when {

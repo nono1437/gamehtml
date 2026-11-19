@@ -74,7 +74,8 @@ open class GameWebViewClient(
             if (path.startsWith(Seer2Assets.PREFIX)) {
                 val upstream = Seer2Assets.upstream(uri.encodedPath.orEmpty(), uri.encodedQuery)
                 if (upstream == null || !isPlayer(source) || request.isForMainFrame) {
-                    diagnostics.record("已阻止资源", url, 403)
+                    val reason = if (upstream == null) "地址或缓存参数无效" else "请求不在播放器子资源中"
+                    diagnostics.record("已阻止资源（$reason）", url, 403)
                     return assetResponse(403)
                 }
                 return interceptRemote(upstream, request, Seer2Assets.ENTRY, seer2 = true)

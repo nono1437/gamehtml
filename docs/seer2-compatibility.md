@@ -8,6 +8,8 @@
 
 启动链依次读取 `Client.swf`、`config/seer.xml`、`version/zzz_config.txt` 和版本数据，再加载 `dll/Assets.swf`、配置及 `dll/LoginModule.swf`。版本文件以 `.swf` 结尾，但由启动器作为压缩二进制数据读取。播放器为这种数据保留单独的校验。普通 SWF 检查文件签名和长度。
 
+3.3.3 的真机日志显示 `Assets.swf` 被代理以 HTTP 403 拒绝。启动器先附加 36 进制资源时间戳，随后 AssetsLoader 再附加一个问号和随机数。3.3.4 保留原样转发该组合，也支持其他启动资源的单独时间戳。
+
 WAFlash 2.8.27 在 Chromium 中成功接收完整的 301,535 字节登录模块后，仍停在动态 100% 画面。启动器要在其首个 Loader 完成后再调用 `Loader.loadBytes` 初始化登录界面。定位用的临时探针在首个 Loader 的完成回调中显示文本，WAFlash 没有显示该文本。内置 Ruffle 0.4.1 用同一官方资源继续加载 `res/login/firstPage.swf` 等资源，并显示官方「开始」页。
 
 官方登录模块另行读取登录服务器地址，并使用 AS3 `flash.net.Socket`。内置浏览器版 Ruffle 的 Socket 需要配置 WebSocket 代理。本构建的公共资源代理只处理文件 GET，请求官方三个发现地址时，测试环境返回了 503。账号认证和登录后游戏流程仍待验证。

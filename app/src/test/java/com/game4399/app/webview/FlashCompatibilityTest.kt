@@ -6,6 +6,17 @@ import java.net.URL
 import java.util.zip.DeflaterOutputStream
 
 class FlashCompatibilityTest {
+    @Test fun officialVersionAndCacheBusterAreForwardedTogether() {
+        val asset = "/_seer2/dll/Assets.swf"
+        val query = "j3yi414w?0.6002201694063842"
+        assertEquals("http://seer2.61.com/dll/Assets.swf?$query", Seer2Assets.upstream(asset, query))
+        assertEquals("http://seer2.61.com/dll/Assets.swf?j3yi414w", Seer2Assets.upstream(asset, "j3yi414w"))
+        assertEquals("http://seer2.61.com/dll/Assets.swf?j3yi414w&42", Seer2Assets.upstream(asset, "j3yi414w&42"))
+        assertNull(Seer2Assets.upstream(asset, "j3yi414w?token=secret"))
+        assertNull(Seer2Assets.upstream(asset, "j3yi414w&42&sid=secret"))
+        assertNull(Seer2Assets.upstream(asset, "password"))
+    }
+
     @Test fun officialEntryKeepsDirectoryAndServesOnlyPublicAssets() {
         assertTrue(Seer2Assets.isLauncher("https://seer2.61.com/index_open.html"))
         assertTrue(Seer2Assets.isLauncher("http://seer2.61.com/Client.swf"))
