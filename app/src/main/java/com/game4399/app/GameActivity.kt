@@ -24,6 +24,7 @@ import com.game4399.app.webview.FlashDiagnostics
 import com.game4399.app.webview.FlashHttp
 import com.game4399.app.webview.FlashPayload
 import com.game4399.app.webview.Seer2Assets
+import com.game4399.app.webview.Seer2OfficialConnection
 import com.game4399.app.webview.GameWebChromeClient
 import com.game4399.app.webview.GameWebView
 import com.game4399.app.webview.GameWebViewClient
@@ -66,6 +67,7 @@ class GameActivity : AppCompatActivity() {
     private lateinit var floatingMenu: FloatingMenuView
     @Volatile private var localResourceTree: Uri? = null
     private val flashDiagnostics = FlashDiagnostics()
+    private var officialConnectionCheckRunning = false
 
     private val localResourcePicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { tree ->
         if (tree != null) {
@@ -710,7 +712,22 @@ class GameActivity : AppCompatActivity() {
             typeface = android.graphics.Typeface.MONOSPACE
             setPadding(24, 12, 24, 12)
         }
-        val scroll = android.widget.ScrollView(this).apply { addView(text) }
+        val probeButton = if (NavHelper.isSeer2Player(webView.url)) {
+            android.widget.Button(this).apply {
+                this.text = "官服连接检测"
+                isEnabled = !officialConnectionCheckRunning
+                setOnClickListener {
+                    isEnabled = false
+                    runOfficialConnectionCheck()
+                }
+            }
+        } else null
+        val content = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            probeButton?.let { addView(it) }
+            addView(text)
+        }
+        val scroll = android.widget.ScrollView(this).apply { addView(content) }
         val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Flash 资源诊断")
             .setView(scroll)
@@ -737,11 +754,29 @@ class GameActivity : AppCompatActivity() {
                     if (!dialog.isShowing) return
                     val snapshot = flashDiagnostics.snapshot()
                     if (text.text.toString() != snapshot) text.text = snapshot
+                    probeButton?.isEnabled = !officialConnectionCheckRunning
                     text.postDelayed(this, 750)
                 }
             })
         }
         dialog.show()
+    }
+
+    private fun runOfficialConnectionCheck() {
+        if (officialConnectionCheckRunning) return
+        officialConnectionCheckRunning = true
+        flashDiagnostics.officialConnectionReport = "正在检查 HTTPS 地址查询和登录端口，请稍候…"
+        Thread({
+            val report = try {
+                Seer2OfficialConnection.check(legacyHostnameVerification = android.os.Build.VERSION.SDK_INT < 24)
+            } catch (_: Exception) {
+                "连接检测未能完成"
+            }
+            runOnUiThread {
+                officialConnectionCheckRunning = false
+                if (!isDestroyed) flashDiagnostics.officialConnectionReport = report
+            }
+        }, "seer2-official-connection-check").start()
     }
 
     /** 横竖屏切换 */

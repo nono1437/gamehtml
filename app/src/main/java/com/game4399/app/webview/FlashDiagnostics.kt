@@ -6,6 +6,7 @@ import java.util.ArrayDeque
 /** A bounded, opt-in session log. Never retain request bodies, headers or raw console text. */
 class FlashDiagnostics {
     @Volatile var enabled = false
+    @Volatile var officialConnectionReport = ""
     private val entries = ArrayDeque<String>()
     private var revision = 0
     private var lastEvent: String? = null
@@ -53,9 +54,17 @@ class FlashDiagnostics {
         record(if (line > 0) "$name · 行 $line" else name, source)
     }
 
-    @Synchronized fun snapshot(): String =
-        "Flash 资源诊断\n交付表示 WebView 已收到响应，Flash 内部执行状态由引擎事件报告。\n" +
-            entries.joinToString("\n")
+    @Synchronized fun snapshot(): String = buildString {
+        appendLine("Flash 资源诊断")
+        val report = officialConnectionReport
+        if (report.isNotEmpty()) {
+            appendLine("官服连接检测")
+            appendLine(report)
+            appendLine()
+        }
+        appendLine("交付表示 WebView 已收到响应，Flash 内部执行状态由引擎事件报告。")
+        append(entries.joinToString("\n"))
+    }
 
     @Synchronized fun clear() {
         entries.clear()
