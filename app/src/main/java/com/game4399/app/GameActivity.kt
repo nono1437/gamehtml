@@ -25,6 +25,7 @@ import com.game4399.app.webview.FlashHttp
 import com.game4399.app.webview.FlashPayload
 import com.game4399.app.webview.Seer2Assets
 import com.game4399.app.webview.Seer2OfficialConnection
+import com.game4399.app.webview.Seer2SocketBridge
 import com.game4399.app.webview.GameWebChromeClient
 import com.game4399.app.webview.GameWebView
 import com.game4399.app.webview.GameWebViewClient
@@ -141,7 +142,9 @@ class GameActivity : AppCompatActivity() {
     // ---------------- WebView ----------------
     private fun setupWebView() {
         webAppInterface = WebAppInterface(this)
-        gameWebViewClient = object : GameWebViewClient(viewClientCallback, flashDiagnostics) {}
+        gameWebViewClient = object : GameWebViewClient(viewClientCallback, flashDiagnostics) {}.apply {
+            seer2SocketBridge = Seer2SocketBridge(webView, flashDiagnostics)
+        }
         webView.apply {
             addJavascriptInterface(webAppInterface, "Android")
             webChromeClient = object : GameWebChromeClient(chromeCallback) {}
@@ -1448,7 +1451,8 @@ class GameActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        webView.apply {
+        if (::gameWebViewClient.isInitialized) gameWebViewClient.seer2SocketBridge?.close()
+        if (::webView.isInitialized) webView.apply {
             (parent as? android.view.ViewGroup)?.removeView(this)
             destroy()
         }

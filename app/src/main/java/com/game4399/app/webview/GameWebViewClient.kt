@@ -42,6 +42,7 @@ open class GameWebViewClient(
     }
 
     @Volatile private var pageUrl: String? = null
+    internal var seer2SocketBridge: Seer2SocketBridge? = null
 
     /** 常见广告域名 */
     private val adHosts = setOf(
@@ -338,6 +339,7 @@ open class GameWebViewClient(
 
         val started = SystemClock.elapsedRealtime()
         val discovery = seer2 && Seer2Assets.isLoginDiscoveryUrl(url)
+        val acceptLoginAddress = if (discovery) seer2SocketBridge?.receiverFor(pageUrl) else null
         if (discovery) diagnostics.record("查询登录服务器地址", url)
         var httpStatus: Int? = null
         try {
@@ -379,6 +381,7 @@ open class GameWebViewClient(
                 val complete = expectedSize == null || expectedSize == data.size.toLong()
                 val valid = complete && if (seer2) Seer2Assets.validPayload(conn.url.path, data)
                     else FlashPayload.isSwf(data, data.size.toLong())
+                if (valid) acceptLoginAddress?.invoke(data)
                 val outcome = when {
                     !complete -> "资源下载不完整"
                     !valid -> "资源格式无效"
@@ -459,6 +462,7 @@ open class GameWebViewClient(
 
     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
         super.onPageStarted(view, url, favicon)
+        seer2SocketBridge?.onPageStarted(url)
         pageUrl = url
         callback.onPageStarted(url)
 

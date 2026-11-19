@@ -1,0 +1,59 @@
+--- a/web/src/navigator.rs
++++ b/web/src/navigator.rs
+@@ -6 +6 @@
+-use gloo_net::websocket::{Message, futures::WebSocket};
++use gloo_net::websocket::{Message, State, futures::WebSocket};
+@@ -507,0 +508,5 @@
++            .or_else(|| {
++                self.socket_proxies
++                    .iter()
++                    .find(|x| x.host == "*" && x.port == 0)
++            })
+@@ -515,0 +521,17 @@
++        let dynamic = proxy.host == "*" && proxy.port == 0;
++        let proxy_url = if dynamic {
++            let Ok(mut url) = Url::parse(&proxy.proxy_url) else {
++                tracing::error!("Invalid dynamic WebSocket proxy URL");
++                sender
++                    .try_send(SocketAction::Connect(handle, ConnectionState::Failed))
++                    .expect("working channel send");
++                return;
++            };
++            url.query_pairs_mut()
++                .append_pair("host", &host)
++                .append_pair("port", &port.to_string());
++            Cow::Owned(url.to_string())
++        } else {
++            Cow::Borrowed(proxy.proxy_url.as_str())
++        };
++
+@@ -518 +540 @@
+-        let ws = match WebSocket::open(&proxy.proxy_url) {
++        let ws = match WebSocket::open(&proxy_url) {
+@@ -529,4 +551,5 @@
+-        let (mut ws_write, mut ws_read) = ws.split();
+-        sender
+-            .try_send(SocketAction::Connect(handle, ConnectionState::Connected))
+-            .expect("working channel send");
++        if !dynamic {
++            sender
++                .try_send(SocketAction::Connect(handle, ConnectionState::Connected))
++                .expect("working channel send");
++        }
+@@ -534,0 +558,16 @@
++            let mut ws = ws;
++            if dynamic {
++                // The Android bridge opens only after the game server accepted TCP.
++                let ready = future::poll_fn(|cx| ws.poll_ready_unpin(cx)).await;
++                let connected = ready.is_ok() && matches!(ws.state(), State::Open);
++                let state = if connected {
++                    ConnectionState::Connected
++                } else {
++                    ConnectionState::Failed
++                };
++                let _ = sender.try_send(SocketAction::Connect(handle, state));
++                if !connected {
++                    return Ok(());
++                }
++            }
++            let (mut ws_write, mut ws_read) = ws.split();
