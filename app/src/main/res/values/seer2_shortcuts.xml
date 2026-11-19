@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="seer2_shortcuts">约瑟快捷路径</string>
+    <string name="seer2_unlock_title">新手任务与图鉴</string>
+    <string name="seer2_unlock_path">进图后，跟着当前新手任务的提示或场景箭头，依次完成对话和任务目标。任务要求交付或领奖时，先按提示完成，再查看主界面的图鉴是否已解锁。\n\n如果某一步在手机上点了没反应，先记下任务名和卡住的步骤。可以用同一区、同一角色在电脑端继续这一段，再回手机查图鉴。</string>
+    <string name="seer2_team_title">传说的追溯 · 三傻</string>
+    <string name="seer2_team_path">先在游戏的活动或日历里找「传说的追溯」。如果能打开，先确认队伍，再看本队的奖励。只看到星钻标价时，回活动首页找领取入口。\n\n图鉴解锁后也可尝试搜「穹末雷影」「熔焰炎蛮」或「邪念罪魔」，查看条目里有没有 GO。</string>
+    <string name="seer2_team_search">传说的追溯</string>
+    <string name="seer2_pet_title">约瑟 · 查活动与孵化</string>
+    <string name="seer2_pet_path">想拿约瑟，先在日历里查找约瑟相关挑战，查看活动是否开放和领取条件。图鉴解锁后可以搜索「约瑟」，看条目是否有 GO。拿到精元后，去小屋按孵化界面的提示操作。\n\n教程还提到 VIP 乐园有「小约瑟」的入口。兑换前核对精灵全名和当前活动条件。</string>
+    <string name="seer2_pet_search">约瑟</string>
+    <string name="seer2_copy_search_term">复制搜索词</string>
+    <string name="seer2_search_term_copied">已复制「%1$s」</string>
+</resources>

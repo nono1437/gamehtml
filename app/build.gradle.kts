@@ -22,8 +22,8 @@ android {
         applicationId = "com.game4399.app"
         minSdk = 23
         targetSdk = 34
-        versionCode = 14
-        versionName = "3.3.11-seer2"
+        versionCode = 15
+        versionName = "3.3.12-seer2"
         manifestPlaceholders["appLabel"] = "@string/app_name"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

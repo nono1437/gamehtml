@@ -20,6 +20,7 @@ import com.game4399.app.data.GameType
 import com.game4399.app.data.PrefsManager
 import com.game4399.app.databinding.ActivityGameBinding
 import com.game4399.app.input.KeyMapper
+import com.game4399.app.ui.showSeer2Shortcuts
 import com.game4399.app.webview.FlashDiagnostics
 import com.game4399.app.webview.FlashHttp
 import com.game4399.app.webview.FlashPayload
@@ -457,6 +458,8 @@ class GameActivity : AppCompatActivity() {
             override fun onClose() { finish() }
             override fun onExtractSwf() { extractSwfFromPage() }
             override fun onFlashDiagnostics() { showFlashDiagnostics() }
+            override fun hasSeer2Shortcuts() = isSeer2Session(webView.url ?: currentUrl)
+            override fun onOpenSeer2Shortcuts() { showSeer2Shortcuts(this@GameActivity) }
             override fun hasLocalResources() = localSwfUri != null &&
                 Uri.parse(webView.url.orEmpty()).getQueryParameter("swf")?.let {
                     it == GameWebViewClient.LOCAL_MOVIE_URL || it.startsWith("https://flash.local/local.swf")
