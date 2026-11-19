@@ -2,6 +2,7 @@ package com.game4399.app.webview
 
 import java.io.IOException
 import java.net.ConnectException
+import java.net.HttpURLConnection
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.SocketTimeoutException
@@ -17,27 +18,30 @@ import javax.net.ssl.SSLSocketFactory
 internal object Seer2OfficialConnection {
     private const val TIMEOUT_MILLIS = 4000
     private const val LOGIN_PORT = 1863
-    private val discoveryHosts = listOf("sr2login.61.com", "ctsr2login.61.com", "cncsr2login.61.com")
 
     fun check(legacyHostnameVerification: Boolean): String = buildString {
-        for (host in discoveryHosts) {
-            val address = "https://${host}/ip.txt"
-            appendLine("$address | ${probeDiscovery(address)}")
+        for (host in Seer2Assets.discoveryHosts) {
+            for (scheme in listOf("http", "https")) {
+                val address = URL("$scheme://$host.61.com/ip.txt")
+                appendLine("$address | ${probeDiscovery(address)}")
+            }
         }
-        // The telecom and netcom hosts are checked even when the HTTPS lookup fails.
-        for (host in discoveryHosts.drop(1)) {
+        // The telecom and netcom hosts are checked even when discovery fails.
+        for (line in listOf("ctsr2login", "cncsr2login")) {
+            val host = "$line.61.com"
             val results = probeSocket(host, LOGIN_PORT, TIMEOUT_MILLIS, legacyHostnameVerification)
             appendLine("$host:$LOGIN_PORT | ${results.joinToString(" | ")}")
         }
     }.trimEnd()
 
-    private fun probeDiscovery(address: String): String {
+    private fun probeDiscovery(address: URL): String {
+        val scheme = address.protocol.uppercase(java.util.Locale.ROOT)
         try {
-            val connection = URL(address).openConnection() as HttpsURLConnection
+            val connection = address.openConnection() as HttpURLConnection
             try {
                 connection.instanceFollowRedirects = false
-                connection.connectTimeout = TIMEOUT_MILLIS
-                connection.readTimeout = TIMEOUT_MILLIS
+                connection.connectTimeout = Seer2Assets.DISCOVERY_TIMEOUT_MILLIS
+                connection.readTimeout = Seer2Assets.DISCOVERY_TIMEOUT_MILLIS
                 connection.useCaches = false
                 val status = connection.responseCode
                 if (status != 200) return "HTTP $status"
@@ -58,13 +62,13 @@ internal object Seer2OfficialConnection {
                 connection.disconnect()
             }
         } catch (_: UnknownHostException) {
-            return "HTTPS 域名解析失败"
+            return "$scheme 域名解析失败"
         } catch (_: SocketTimeoutException) {
-            return "HTTPS 查询超时"
+            return "$scheme 查询超时"
         } catch (_: SSLException) {
-            return "HTTPS 握手或证书校验失败"
+            return "$scheme 握手或证书校验失败"
         } catch (_: IOException) {
-            return "HTTPS 连接失败"
+            return "$scheme 连接失败"
         }
     }
 

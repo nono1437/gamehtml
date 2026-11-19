@@ -765,7 +765,7 @@ class GameActivity : AppCompatActivity() {
     private fun runOfficialConnectionCheck() {
         if (officialConnectionCheckRunning) return
         officialConnectionCheckRunning = true
-        flashDiagnostics.officialConnectionReport = "正在检查 HTTPS 地址查询和登录端口，请稍候…"
+        flashDiagnostics.officialConnectionReport = "正在检查 HTTP、HTTPS 地址查询和登录端口，请稍候…"
         Thread({
             val report = try {
                 Seer2OfficialConnection.check(legacyHostnameVerification = android.os.Build.VERSION.SDK_INT < 24)

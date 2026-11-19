@@ -350,13 +350,14 @@ open class GameWebViewClient(
                     ?: userAgent,
                 accept = request.requestHeaders.entries.firstOrNull { it.key.equals("Accept", true) }?.value,
                 cookies = cookieLookup,
+                timeoutMillis = if (discovery) Seer2Assets.DISCOVERY_TIMEOUT_MILLIS else null,
                 onRedirect = { from, code, followed ->
                     diagnostics.record(if (followed) "重定向" else "已阻止重定向", from, code,
                         millis = SystemClock.elapsedRealtime() - started)
                 },
                 allowRedirect = { target ->
                     when {
-                        discovery -> FlashHttp.sameOrigin(URL(url), target) &&
+                        discovery -> URL(url).host == target.host &&
                             Seer2Assets.isLoginDiscoveryUrl(target.toString())
                         seer2 -> Seer2Assets.publicAsset(target.toString()) != null
                         else -> true

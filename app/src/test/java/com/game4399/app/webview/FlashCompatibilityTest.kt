@@ -6,14 +6,20 @@ import java.net.URL
 import java.util.zip.DeflaterOutputStream
 
 class FlashCompatibilityTest {
-    @Test fun loginDiscoveryOnlyRoutesKnownPublicMetadataOverHttps() {
+    @Test fun loginDiscoveryUsesTheOfficialPublicMetadataUrls() {
         val route = "/_seer2/login-discovery/sr2login/ip.txt"
-        assertEquals("https://sr2login.61.com/ip.txt?v=0.123",
+        assertEquals("http://sr2login.61.com/ip.txt?v=0.123",
             Seer2Assets.upstream(route, "v=0.123"))
-        assertEquals("https://ctsr2login.61.com/ip.txt",
+        assertEquals("http://ctsr2login.61.com/ip.txt",
             Seer2Assets.upstream("/_seer2/login-discovery/ctsr2login/ip.txt", null))
-        assertEquals("https://cncsr2login.61.com/ip.txt?v=1e-7",
+        assertEquals("http://cncsr2login.61.com/ip.txt?v=1e-7",
             Seer2Assets.upstream("/_seer2/login-discovery/cncsr2login/ip.txt", "v=1e-7"))
+        assertTrue(Seer2Assets.isLoginDiscoveryUrl("http://sr2login.61.com/ip.txt?v=0.123"))
+        assertTrue(Seer2Assets.isLoginDiscoveryUrl("https://sr2login.61.com/ip.txt"))
+        assertFalse(Seer2Assets.isLoginDiscoveryUrl("http://sr2login.61.com:1863/ip.txt"))
+        assertFalse(Seer2Assets.isLoginDiscoveryUrl("http://sr2login.61.com/ip.txt?session=test"))
+        assertFalse(Seer2Assets.isLoginDiscoveryUrl("http://sr2login.61.com.example/ip.txt"))
+        assertFalse(Seer2Assets.isLoginDiscoveryUrl("http://sr2login.61.com/account/login"))
         assertNull(Seer2Assets.upstream(route, "v=0.1&token=test"))
         assertNull(Seer2Assets.upstream("/_seer2/login-discovery/example/ip.txt", null))
         assertNull(Seer2Assets.upstream("/_seer2/login-discovery/sr2login/login.txt", null))

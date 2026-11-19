@@ -12,6 +12,7 @@ internal object Seer2Assets {
     const val MOVIE = "${BASE}Client.swf"
     const val DISCOVERY_PREFIX = "${PREFIX}login-discovery/"
     const val DISCOVERY_MAX_BYTES = 128
+    const val DISCOVERY_TIMEOUT_MILLIS = 4000
 
     private val safePath = Regex("""/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*""")
     private val cacheKey = Regex("""(?:[0-9.]{1,32}|(?:v|ver|version|t|r|_)=\w{1,32})""")
@@ -21,7 +22,7 @@ internal object Seer2Assets {
     private val packedDlls = setOf("/dll/TaomeeCoreDLL.swf", "/dll/ClientCoreDLL.swf", "/dll/ClientAppDLL.swf")
     private val assetDirectories = setOf("config", "version", "dll", "res")
     private val assetExtensions = setOf("swf", "xml", "txt", "json", "png", "jpg", "jpeg", "gif", "mp3", "ogg", "dat", "bin")
-    private val discoveryHosts = setOf("sr2login", "ctsr2login", "cncsr2login")
+    val discoveryHosts = setOf("sr2login", "ctsr2login", "cncsr2login")
     private val discoveryQuery = Regex("""v=(?:0(?:\.\d{1,24})?|[0-9](?:\.\d{1,24})?e-\d{1,2})""")
     private val endpoint = Regex("""(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})""")
 
@@ -45,7 +46,8 @@ internal object Seer2Assets {
             val host = rawPath.removePrefix(DISCOVERY_PREFIX).removeSuffix("/ip.txt")
             if (host !in discoveryHosts || rawPath != "$DISCOVERY_PREFIX$host/ip.txt" ||
                 !validDiscoveryQuery(rawQuery)) return null
-            return "https://$host.61.com/ip.txt" + (rawQuery?.let { "?$it" } ?: "")
+            // Server.xml lists these three public GET endpoints on HTTP.
+            return "http://$host.61.com/ip.txt" + (rawQuery?.let { "?$it" } ?: "")
         }
         return staticAsset("/" + rawPath.removePrefix(PREFIX), rawQuery)
     }
@@ -53,7 +55,7 @@ internal object Seer2Assets {
     fun isLoginDiscoveryUrl(url: String): Boolean {
         val uri = runCatching { URI(url) }.getOrNull() ?: return false
         val host = uri.host?.removeSuffix(".61.com")
-        return uri.scheme == "https" && host in discoveryHosts && uri.host == "$host.61.com" &&
+        return uri.scheme in setOf("http", "https") && host in discoveryHosts && uri.host == "$host.61.com" &&
             uri.port == -1 && uri.rawUserInfo == null && uri.rawFragment == null &&
             uri.rawPath == "/ip.txt" && validDiscoveryQuery(uri.rawQuery)
     }

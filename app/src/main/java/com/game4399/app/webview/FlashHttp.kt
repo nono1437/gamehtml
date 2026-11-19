@@ -34,6 +34,7 @@ internal object FlashHttp {
         userAgent: String,
         accept: String? = null,
         cookies: ((String) -> String?)? = null,
+        timeoutMillis: Int? = null,
         onRedirect: (String, Int, Boolean) -> Unit = { _, _, _ -> },
         allowRedirect: (URL) -> Boolean = { true }
     ): HttpURLConnection {
@@ -48,8 +49,8 @@ internal object FlashHttp {
             var handOff = false
             try {
                 connection.instanceFollowRedirects = false
-                connection.connectTimeout = 10000
-                connection.readTimeout = 20000
+                connection.connectTimeout = timeoutMillis ?: 10000
+                connection.readTimeout = timeoutMillis ?: 20000
                 connection.useCaches = false
                 connection.setRequestProperty("User-Agent", userAgent)
                 connection.setRequestProperty("Accept", accept ?: "*/*")
