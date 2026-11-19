@@ -31,16 +31,25 @@ internal class Seer2SocketBridge(
 
                 when (request.optString("type")) {
                     "open" -> {
-                        val opened = current.relay.open(id, request.optString("host"), request.optInt("port")) { event ->
+                        val host = request.optString("host")
+                        val port = request.optInt("port")
+                        val target = Seer2SocketRelay.describeTarget(host, port)
+                        var receivedData = false
+                        val opened = current.relay.open(id, host, port) { event ->
                             view.post {
                                 if (page === current) {
                                     val state = when (event.type) {
                                         "open" -> "官服 TCP 已连接"
                                         "close" -> "官服 TCP 已关闭"
                                         "error" -> "官服 TCP 连接或通信失败"
+                                        "data" -> if (!receivedData) "官服 TCP 收到首批数据" else null
                                         else -> null
                                     }
-                                    state?.let { diagnostics.record(it, current.url) }
+                                    if (event.type == "data") receivedData = true
+                                    state?.let {
+                                        diagnostics.record("$it（${event.route.label} $target）", current.url,
+                                            bytes = event.data?.size?.toLong())
+                                    }
                                     val result = JSONObject().put("id", id).put("type", event.type)
                                     event.data?.let { result.put("data", Base64.encodeToString(it, Base64.NO_WRAP)) }
                                     runCatching { reply.postMessage(result.toString()) }
@@ -48,7 +57,7 @@ internal class Seer2SocketBridge(
                             }
                         }
                         if (!opened) {
-                            diagnostics.record("已阻止未获许可的官服 TCP 连接", current.url)
+                            diagnostics.record("已阻止未获许可的官服 TCP 连接（$target）", current.url)
                             reply.postMessage(JSONObject().put("id", id).put("type", "error").toString())
                         }
                     }
@@ -72,8 +81,14 @@ internal class Seer2SocketBridge(
         if (supported && url != null && isOfficialPlayer(url)) page = Page(url, Seer2SocketRelay())
     }
 
-    fun receiverFor(url: String?): ((ByteArray) -> Unit)? = page
-        ?.takeIf { it.url == url }?.relay?.let { it::rememberLoginAddress }
+    fun receiverFor(url: String?, path: String?): ((ByteArray) -> Unit)? {
+        val relay = page?.takeIf { it.url == url }?.relay ?: return null
+        return when (path) {
+            "/ip.txt" -> relay::rememberLoginAddress
+            "/config/Server.xml" -> relay::rememberServerConfiguration
+            else -> null
+        }
+    }
 
     override fun close() {
         onPageStarted(null)

@@ -78,12 +78,51 @@ class Seer2SocketRelayTest {
         }
     }
 
+    @Test fun allowsOnlyThePublicDeputiesListedInTheOfficialConfiguration() {
+        val loopback = InetAddress.getByName("127.0.0.1")
+        ServerSocket(0, 1, loopback).use { listener ->
+            listener.soTimeout = 2000
+            val events = LinkedBlockingQueue<Seer2SocketRelay.Event>()
+            Seer2SocketRelay { socket, address ->
+                assertEquals("9.9.9.9", address.host)
+                assertEquals(1863, address.port)
+                socket.connect(InetSocketAddress(loopback, listener.localPort), 1000)
+            }.use { relay ->
+                assertFalse(relay.open(1, "9.9.9.9", 1863, events::add))
+                relay.rememberServerConfiguration("""
+                    <root gid="10" name="seer2">
+                        <telDeputize port="1863" ip="9.9.9.9" />
+                        <cncDeputize ip="192.168.1.1" port="1863" />
+                        <other ip="1.1.1.1" port="1863" />
+                    </root>
+                """.trimIndent().toByteArray())
+                assertFalse(relay.open(1, "192.168.1.1", 1863, events::add))
+                assertFalse(relay.open(1, "1.1.1.1", 1863, events::add))
+                assertFalse(relay.open(1, "9.9.9.9", 1864, events::add))
+                assertTrue(relay.open(1, "9.9.9.9", 1863, events::add))
+                listener.accept().use { peer ->
+                    peer.getOutputStream().write(33)
+                    val connected = events.poll(2, TimeUnit.SECONDS)
+                    assertEquals("open", connected?.type)
+                    assertEquals(Seer2SocketRelay.Route.DEPUTY, connected?.route)
+                    assertArrayEquals(byteArrayOf(33), events.poll(2, TimeUnit.SECONDS)?.data)
+                }
+                relay.rememberServerConfiguration("""
+                    <!DOCTYPE root SYSTEM "http://example.invalid/">
+                    <root name="seer2"><telDeputize ip="9.9.9.9" port="1863"/></root>
+                """.trimIndent().toByteArray())
+                assertFalse(relay.open(2, "9.9.9.9", 1863, events::add))
+            }
+        }
+    }
+
     private fun worldListPacket(host: String, port: Int): ByteArray {
         val length = 18 + 4 + 4 + 26 + 1
         return ByteBuffer.allocate(length).order(ByteOrder.LITTLE_ENDIAN).apply {
             putInt(length).putShort(105).putInt(0).putInt(0).putInt(0)
             putInt(100).putInt(1).putShort(5)
-            put(host.toByteArray().copyOf(16)).putShort(port.toShort()).putInt(10).put(0).put(0).put(0)
+            val name = host.toByteArray().copyOf(16).also { it[it.lastIndex] = 0x58 }
+            put(name).putShort(port.toShort()).putInt(10).put(0).put(0).put(0)
         }.array()
     }
 }

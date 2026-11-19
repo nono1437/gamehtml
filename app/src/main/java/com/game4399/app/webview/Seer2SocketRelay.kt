@@ -2,6 +2,7 @@ package com.game4399.app.webview
 
 import java.io.Closeable
 import java.io.IOException
+import java.io.StringReader
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -9,6 +10,11 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Executors
+import javax.xml.parsers.DocumentBuilderFactory
+import org.w3c.dom.Element
+import org.xml.sax.InputSource
+import org.xml.sax.SAXException
+import org.xml.sax.helpers.DefaultHandler
 
 /** Carries binary Flash socket data for a single official game page. */
 internal class Seer2SocketRelay(
@@ -17,10 +23,12 @@ internal class Seer2SocketRelay(
     }
 ) : Closeable {
     data class Address(val host: String, val port: Int)
-    data class Event(val type: String, val data: ByteArray? = null)
+    enum class Route(val label: String) { LOGIN("登录服"), WORLD("区服直连"), DEPUTY("官服备用线路") }
+    data class Event(val type: String, val route: Route, val data: ByteArray? = null)
 
     private val loginAddresses = mutableSetOf<Address>()
     private val worldAddresses = mutableSetOf<Address>()
+    private var deputyAddresses = emptySet<Address>()
     private val connections = mutableMapOf<Int, Connection>()
     private val workers = Executors.newFixedThreadPool(MAX_CONNECTIONS * 2)
     private var closed = false
@@ -31,12 +39,23 @@ internal class Seer2SocketRelay(
         publicAddress(value.substringBefore(':'), value.substringAfter(':').toInt())?.let(loginAddresses::add)
     }
 
+    fun rememberServerConfiguration(bytes: ByteArray) {
+        val addresses = parseDeputies(bytes)
+        synchronized(this) {
+            if (!closed) deputyAddresses = addresses
+        }
+    }
+
     @Synchronized fun open(id: Int, host: String, port: Int, publish: (Event) -> Unit): Boolean {
         if (closed || id <= 0 || id in connections || connections.size >= MAX_CONNECTIONS) return false
         val address = publicAddress(host, port) ?: return false
-        val login = address in loginAddresses
-        if (!login && address !in worldAddresses) return false
-        val connection = Connection(id, address, login, publish)
+        val route = when (address) {
+            in loginAddresses -> Route.LOGIN
+            in worldAddresses -> Route.WORLD
+            in deputyAddresses -> Route.DEPUTY
+            else -> return false
+        }
+        val connection = Connection(id, address, route, publish)
         connections[id] = connection
         workers.execute(connection::read)
         return true
@@ -61,6 +80,7 @@ internal class Seer2SocketRelay(
         connections.clear()
         loginAddresses.clear()
         worldAddresses.clear()
+        deputyAddresses = emptySet()
         workers.shutdownNow()
     }
 
@@ -81,7 +101,8 @@ internal class Seer2SocketRelay(
             buffer.get(ip)
             val port = buffer.short.toInt() and 0xffff
             buffer.position(buffer.position() + 6) // user count and two flags
-            val host = ip.toString(Charsets.US_ASCII).trimEnd('\u0000', ' ')
+            // Flash readUTFBytes stops at the first NUL in the fixed-width IP field.
+            val host = ip.toString(Charsets.US_ASCII).substringBefore('\u0000')
             if (worldAddresses.size < 4096) publicAddress(host, port)?.let(worldAddresses::add)
         }
     }
@@ -89,12 +110,12 @@ internal class Seer2SocketRelay(
     private inner class Connection(
         private val id: Int,
         private val address: Address,
-        login: Boolean,
+        private val route: Route,
         private val publish: (Event) -> Unit
     ) {
         private val socket = Socket()
         private val writes = ArrayBlockingQueue<ByteArray>(64)
-        private val frames = if (login) LoginFrames(::rememberWorldAddresses) else null
+        private val frames = if (route == Route.LOGIN) LoginFrames(::rememberWorldAddresses) else null
         @Volatile var closing = false
             private set
         private var opened = false
@@ -112,14 +133,14 @@ internal class Seer2SocketRelay(
                     workers.execute(::write)
                     opened = true
                 }
-                publish(Event("open"))
+                publish(Event("open", route))
                 val input = socket.getInputStream()
                 val buffer = ByteArray(CHUNK_BYTES)
                 while (true) {
                     val size = input.read(buffer)
                     if (size < 0) break
                     frames?.accept(buffer, size)
-                    publish(Event("data", buffer.copyOf(size)))
+                    publish(Event("data", route, buffer.copyOf(size)))
                 }
             } catch (_: IOException) {
                 if (!closing) outcome = "error"
@@ -128,7 +149,7 @@ internal class Seer2SocketRelay(
                 val ended = synchronized(this@Seer2SocketRelay) {
                     if (connections[id] === this) connections.remove(id) else null
                 }
-                if (ended != null) publish(Event(outcome))
+                if (ended != null) publish(Event(outcome, route))
             }
         }
 
@@ -195,7 +216,8 @@ internal class Seer2SocketRelay(
         }
     }
 
-    private companion object {
+    companion object {
+        private val deputyTags = setOf("telDeputize", "cncDeputize")
         const val CONNECT_TIMEOUT = 8000
         const val MAX_CONNECTIONS = 4
         const val HEADER_BYTES = 18
@@ -203,11 +225,18 @@ internal class Seer2SocketRelay(
         const val MAX_PACKET_BYTES = 1024 * 1024
         const val CHUNK_BYTES = 16 * 1024
 
-        fun publicAddress(host: String, port: Int): Address? {
-            if (port !in 1..65535 || host.length > 15) return null
-            val parts = host.split('.')
+        fun describeTarget(host: String, port: Int): String = publicAddress(host, port)?.let { "${it.host}:${it.port}" }
+            ?: "地址格式不受支持或为保留地址"
+
+        private fun publicAddress(host: String, port: Int): Address? {
+            val trimmed = host.trim()
+            if (port !in 1..65535 || trimmed.length > 15) return null
+            val parts = trimmed.split('.')
             if (parts.size != 4) return null
-            val octets = parts.map { it.toIntOrNull()?.takeIf { part -> part in 0..255 && it == "$part" } ?: return null }
+            val octets = parts.map {
+                if (it.length !in 1..3 || it.any { digit -> digit !in '0'..'9' }) return null
+                it.toInt().takeIf { part -> part in 0..255 } ?: return null
+            }
             val (first, second, third) = octets
             if (first !in 1..223 || first == 100 && second in 64..127 ||
                 first == 192 && second == 0 && third in setOf(0, 2) ||
@@ -215,7 +244,28 @@ internal class Seer2SocketRelay(
                 first == 203 && second == 0 && third == 113) return null
             val ip = InetAddress.getByAddress(octets.map(Int::toByte).toByteArray())
             if (ip.isLoopbackAddress || ip.isLinkLocalAddress || ip.isSiteLocalAddress) return null
-            return Address(host, port)
+            return Address(octets.joinToString("."), port)
+        }
+
+        private fun parseDeputies(bytes: ByteArray): Set<Address> {
+            if (bytes.size !in 1..32 * 1024) return emptySet()
+            val xml = bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF")
+            if (xml.contains("<!DOCTYPE")) return emptySet()
+            val root = runCatching {
+                val parser = DocumentBuilderFactory.newInstance().newDocumentBuilder()
+                parser.setEntityResolver { _, _ -> throw SAXException("External entities are disabled") }
+                parser.setErrorHandler(DefaultHandler())
+                parser.parse(InputSource(StringReader(xml))).documentElement
+            }.getOrNull() ?: return emptySet()
+            if (root.tagName != "root" || root.getAttribute("name") != "seer2") return emptySet()
+            return deputyTags.mapNotNullTo(mutableSetOf()) { tag ->
+                val children = root.childNodes
+                val item = (0 until children.length).asSequence()
+                    .mapNotNull { children.item(it) as? Element }
+                    .firstOrNull { it.tagName == tag } ?: return@mapNotNullTo null
+                val port = item.getAttribute("port").toIntOrNull() ?: return@mapNotNullTo null
+                publicAddress(item.getAttribute("ip"), port)
+            }
         }
     }
 }
