@@ -22,6 +22,8 @@ internal object Seer2Assets {
     private val packedDlls = setOf("/dll/TaomeeCoreDLL.swf", "/dll/ClientCoreDLL.swf", "/dll/ClientAppDLL.swf")
     private val assetDirectories = setOf("config", "version", "dll", "res")
     private val assetExtensions = setOf("swf", "xml", "txt", "json", "png", "jpg", "jpeg", "gif", "mp3", "ogg", "dat", "bin")
+    private val pngHeader = byteArrayOf(-119, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82)
+    private val pngEnd = byteArrayOf(0, 0, 0, 0, 73, 69, 78, 68, -82, 66, 96, -126)
     val discoveryHosts = setOf("sr2login", "ctsr2login", "cncsr2login")
     private val discoveryQuery = Regex("""v=(?:0(?:\.\d{1,24})?|[0-9](?:\.\d{1,24})?e-\d{1,2})""")
     private val endpoint = Regex("""(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})""")
@@ -64,8 +66,13 @@ internal object Seer2Assets {
 
     private fun staticAsset(path: String, rawQuery: String?): String? {
         if (!safePath.matches(path) || path.split('/').any { it == "." || it == ".." }) return null
-        if (path != "/Client.swf" && (path.split('/')[1] !in assetDirectories ||
-                path.substringAfterLast('.').lowercase() !in assetExtensions)) return null
+        val extension = path.substringAfterLast('.').lowercase()
+        val allowed = when {
+            path == "/Client.swf" -> true
+            path.startsWith("/module/") -> extension == "swf"
+            else -> path.split('/')[1] in assetDirectories && extension in assetExtensions
+        }
+        if (!allowed) return null
         if (rawQuery != null && !isCacheKey(rawQuery)) return null
         return ORIGIN + path + (rawQuery?.let { "?$it" } ?: "")
     }
@@ -89,10 +96,33 @@ internal object Seer2Assets {
         versionPath.matches(path) -> data.size > 8 &&
             data.copyOfRange(0, 4).contentEquals(byteArrayOf(1, 51, 83, 5)) && isZlib(data, 8)
         path in packedDlls -> FlashPayload.isSwf(data, data.size.toLong()) || isZlib(data, 7, true)
-        path.endsWith(".swf", true) -> FlashPayload.isSwf(data, data.size.toLong())
+        path.endsWith(".swf", true) -> FlashPayload.isSwf(data, data.size.toLong()) ||
+            (path.startsWith("/res/") && isFrameSequence(data))
         path == "/version/zzz_config.txt" -> data.size in 1..32 &&
             data.toString(Charsets.UTF_8).trim().matches(Regex("[0-9]{1,12}"))
         else -> data.isNotEmpty() && !FlashPayload.looksLikeHtml(data)
+    }
+
+    // FrameSequence stores a header, a frame table and a PNG sheet under a .swf resource name.
+    private fun isFrameSequence(data: ByteArray): Boolean {
+        if (data.size < 2) return false
+        fun word(offset: Int): Int = (data[offset].toInt() shl 8) or (data[offset + 1].toInt() and 255)
+
+        val headerEnd = 2 + word(0)
+        if (headerEnd !in 16..data.size - 8 || word(2) <= 0 || word(4) <= 0 || word(6) <= 0) return false
+        // The header ends with an AMF3 anonymous dynamic object containing animation labels.
+        if (data[12] != 10.toByte() || data[13] != 11.toByte() || data[14] != 1.toByte() ||
+            data[headerEnd - 1] != 1.toByte()) return false
+
+        val tableBytes = word(headerEnd)
+        val table = headerEnd + 2
+        val frameCount = word(table + 4)
+        if (word(table) <= 0 || word(table + 2) <= 0 || frameCount <= 0 || tableBytes != 6 + frameCount * 12) return false
+
+        val image = table + tableBytes
+        return image <= data.size - 33 - pngEnd.size &&
+            pngHeader.indices.all { data[image + it] == pngHeader[it] } &&
+            pngEnd.indices.all { data[data.size - pngEnd.size + it] == pngEnd[it] }
     }
 
     private fun isZlib(data: ByteArray, offset: Int, requireSwf: Boolean = false): Boolean {

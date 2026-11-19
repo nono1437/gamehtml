@@ -126,6 +126,10 @@
       "maxExecutionDuration": {"secs": 15, "nanos": 0}
     };
     if (IS_SEER2) {
+      // The original launcher sets noScale and top-left alignment for its 1200×660 stage.
+      ruffleConfig.forceScale = true;
+      ruffleConfig.salign = '';
+      ruffleConfig.forceAlign = true;
       if (seer2Tcp) {
         ruffleConfig.socketProxy = [{ host: '*', port: 0, proxyUrl: 'wss://flash.local/_seer2/socket' }];
         document.getElementById('hint').textContent = '官服旧版 TCP 直连 · 登录通信未加密';

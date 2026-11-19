@@ -226,6 +226,11 @@ class GameActivity : AppCompatActivity() {
             binding.errorView.visibility = View.GONE
             // 导航到新页面时根据 URL 重新应用 UA（横屏默认桌面模式）
             if (url != null) {
+                val seer2 = isSeer2Session(url)
+                if (seer2 != isSeer2Session(currentUrl)) {
+                    gamepadVisible = PrefsManager.isGamepadEnabled && !seer2
+                    showGamepad(gamepadVisible)
+                }
                 currentUrl = url
                 val uaMode = PrefsManager.uaMode
                 if (uaMode == "desktop") {
@@ -345,6 +350,8 @@ class GameActivity : AppCompatActivity() {
     }
 
     // ---------------- 虚拟手柄 ----------------
+    private fun isSeer2Session(url: String): Boolean = Seer2Assets.isLauncher(url) || NavHelper.isSeer2Player(url)
+
     private fun setupGamepad() {
         val alpha = PrefsManager.gamepadAlpha
         binding.dpad.targetWebView = webView
@@ -367,8 +374,8 @@ class GameActivity : AppCompatActivity() {
         // Start/Select 按钮拖拽支持（位置编辑模式）
         setupSystemButtonsDrag()
 
-        // 根据设置初始显示手柄
-        if (PrefsManager.isGamepadEnabled) {
+        // 《约瑟传说》优先用触屏操作，手柄仍可从悬浮菜单打开。
+        if (PrefsManager.isGamepadEnabled && !isSeer2Session(currentUrl)) {
             gamepadVisible = true
             showGamepad(true)
         }
@@ -1438,7 +1445,7 @@ class GameActivity : AppCompatActivity() {
         binding.dpad.invalidate()
         binding.actionButtons.invalidate()
         applyActionButtonsSize()
-        if (PrefsManager.isGamepadEnabled && !gamepadVisible) {
+        if (PrefsManager.isGamepadEnabled && !gamepadVisible && !isSeer2Session(currentUrl)) {
             gamepadVisible = true
             showGamepad(true)
         }

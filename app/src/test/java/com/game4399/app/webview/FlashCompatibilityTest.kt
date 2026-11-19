@@ -3,6 +3,8 @@ package com.game4399.app.webview
 import org.junit.Assert.*
 import org.junit.Test
 import java.net.URL
+import java.nio.ByteBuffer
+import java.util.Base64
 import java.util.zip.DeflaterOutputStream
 
 class FlashCompatibilityTest {
@@ -57,6 +59,39 @@ class FlashCompatibilityTest {
             Seer2Assets.publicAsset("https://seer2.61.com/Client.swf"))
         assertNull(Seer2Assets.publicAsset("https://seer2.61.com/client.swf"))
         assertNull(Seer2Assets.publicAsset("https://seer2.61.com/dll/LoginModule.swf?token=test"))
+    }
+
+    @Test fun officialPanelAndOtherGameModulesRetainTheirPathsAndVersions() {
+        val paths = listOf("module/app/PetBagPanel.swf", "module/app/MapPanel.swf", "module/app/TrainPetsAllPanel.swf",
+            "module/app/UserPanel.swf", "module/quest/Example.swf")
+        for (path in paths) {
+            assertEquals("http://seer2.61.com/$path?j3yi414w", Seer2Assets.upstream("/_seer2/$path", "j3yi414w"))
+            assertEquals("http://seer2.61.com/$path", Seer2Assets.publicAsset("https://seer2.61.com/$path"))
+        }
+        assertNull(Seer2Assets.upstream("/_seer2/module/app/MapPanel.swf", "token=secret"))
+        assertNull(Seer2Assets.upstream("/_seer2/module/../account/Login.swf", null))
+        assertNull(Seer2Assets.upstream("/_seer2/module/app/credentials.txt", null))
+        assertNull(Seer2Assets.publicAsset("http://example.com/module/app/MapPanel.swf"))
+    }
+
+    @Test fun validatesOfficialFrameSequencesWithSwfFileNames() {
+        val png = Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jZ1sAAAAASUVORK5CYII=")
+        val metadata = byteArrayOf(10, 11, 1, 3, 105, 6, 7, 49, 44, 49, 3, 108, 6, 3, 97, 1)
+        val sequence = ByteBuffer.allocate(32 + metadata.size + png.size).apply {
+            putShort((10 + metadata.size).toShort())
+            repeat(5) { putShort(1) }
+            put(metadata)
+            putShort(18).putShort(1).putShort(1).putShort(1)
+            repeat(6) { putShort(1) }
+            put(png)
+        }.array()
+        val path = "/res/pet/normal/824.swf"
+        assertTrue(Seer2Assets.validPayload(path, sequence))
+        assertFalse(Seer2Assets.validPayload(path, sequence.copyOf(sequence.size - 1)))
+        val badTable = sequence.clone().apply { this[2 + 10 + metadata.size + 1] = 19 }
+        assertFalse(Seer2Assets.validPayload(path, badTable))
+        assertFalse(Seer2Assets.validPayload(path, "<html>failure</html>".toByteArray()))
+        assertFalse(Seer2Assets.validPayload("/module/app/PetBagPanel.swf", sequence))
     }
 
     @Test fun formatCheckRecognizesMoviesAndOfficialDataSeparately() {
