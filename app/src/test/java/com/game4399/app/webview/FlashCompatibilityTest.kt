@@ -89,11 +89,14 @@ class FlashCompatibilityTest {
         diagnostics.enabled = true
         diagnostics.record("已交付", "https://user:secret@example.com/res/LoginModule.swf?token=secret#secret", 200, 301535, 120)
         diagnostics.console("ERROR", "Uncaught TypeError: password=secret", "https://flash.local/waflash.html?game=secret", 42)
+        diagnostics.console("WARNING", "%cWARN%c Missing WebSocket proxy for host secret.example, port 1863",
+            "https://flash.local/ruffle/core.ruffle.js", 1)
         diagnostics.record("失败", "https://example.com/login/secret.txt", 403)
         val report = diagnostics.snapshot()
         assertTrue(report.contains("https://example.com/res/LoginModule.swf"))
         assertTrue(report.contains("301535"))
         assertTrue(report.contains("TypeError"))
+        assertTrue(report.contains("Ruffle Socket 连接失败（未配置 WebSocket 代理）"))
         assertFalse(report.contains("secret"))
         assertFalse(report.contains("测试"))
     }

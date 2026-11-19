@@ -12,9 +12,11 @@
 
 WAFlash 2.8.27 在 Chromium 中成功接收完整的 301,535 字节登录模块后，仍停在动态 100% 画面。启动器要在其首个 Loader 完成后再调用 `Loader.loadBytes` 初始化登录界面。定位用的临时探针在首个 Loader 的完成回调中显示文本，WAFlash 没有显示该文本。内置 Ruffle 0.4.1 用同一官方资源继续加载 `res/login/firstPage.swf` 等资源，并显示官方「开始」页。
 
-官方登录模块打开账号表单时会读取 `sr2login.61.com/ip.txt`，成功后才收起等待动画。3.3.6 的真机报告显示三条 HTTPS 查询均超时。3.3.7 按官方 `config/Server.xml` 中的原始 HTTP 地址转发三条公开查询。代理只处理限定的 `/ip.txt` GET 请求，不转发 Cookie 或请求体。同域名重定向可以升级到 HTTPS，HTTPS 证书仍由系统验证。查询失败或超时后，播放器显示原因及「重新加载」。构建环境的出口对两种协议均返回 503，手机上的 HTTP 结果待测。
+官方登录模块打开账号表单时会读取 `sr2login.61.com/ip.txt`，成功后才收起等待动画。3.3.6 的真机报告显示三条 HTTPS 查询均超时。3.3.7 按官方 `config/Server.xml` 中的原始 HTTP 地址转发三条公开查询。代理只处理限定的 `/ip.txt` GET 请求，不转发 Cookie 或请求体。同域名重定向可以升级到 HTTPS，HTTPS 证书仍由系统验证。查询失败或超时后，播放器显示原因及「重新加载」。3.3.7 的真机报告确认三条 HTTP 查询均返回 200 和有效地址，启动时的默认查询和点电信登录后的地址查询均已交付给 WebView。
 
-官方登录模块通过 AS3 `flash.net.Socket` 发送登录数据。真机报告显示电信和网通的 1863 端口可建立 TCP 连接，但 TLS 握手或证书校验失败。内置浏览器版 Ruffle 的 Socket 需要 WebSocket 代理。游戏盒没有为官服引入明文登录转发，账号认证和登录后游戏流程待验证。
+官方 `LoginModule.swf` 的 `LoginAgent.onIOError` 将 Socket I/O 失败显示为「服务器没有开启」。用官方 SWF 和本地模拟地址回放登录时，内置 Ruffle 0.4.1 输出 `Missing WebSocket proxy`，随后原版界面弹出同样的消息。回放期间没有发起 WebSocket 或向外部发送登录请求。Ruffle 网页版会在没有匹配代理时直接向 Flash 报告连接失败。[Ruffle 0.4.1 的 Socket 实现](https://github.com/ruffle-rs/ruffle/blob/v0.4.1/web/src/navigator.rs#L494-L516)
+
+真机报告显示，电信和网通的 1863 端口可建立 TCP 连接，TLS 握手或证书校验失败。官服登录模块通过 AS3 `flash.net.Socket` 发送登录数据，当前没有验证到可安全转发官服认证和游戏流量的连接。资源诊断会把缺少 WebSocket 代理标成独立错误，导出时舍弃原始控制台内容。账号认证和登录后游戏流程待验证。
 
 ## 检测官服连接
 

@@ -44,6 +44,7 @@ class FlashDiagnostics {
             message == "WAFLASH> Playing..." -> "WAFlash 已播放启动 SWF"
             message.startsWith("WAFLASH> WAFLASH_NOTIFY_ABORT") -> "WAFlash 引擎中止"
             message.startsWith("FlashDiagnostic waflash.") -> "WAFlash JavaScript 异常 (${errorType(message)})"
+            message.contains("Missing WebSocket proxy for host ") -> "Ruffle Socket 连接失败（未配置 WebSocket 代理）"
             message.contains("Encountered stub: AVM2 flash.net.Socket") -> "Ruffle 的 AS3 Socket API 受限"
             message.contains("Error during AVM2") || message.contains("Error running AVM2") ->
                 "Ruffle AS3 异常 (${Regex("Error #[0-9]{3,5}").find(message)?.value ?: "AVM2"})"
