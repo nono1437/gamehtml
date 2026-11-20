@@ -459,7 +459,17 @@ class GameActivity : AppCompatActivity() {
             override fun onExtractSwf() { extractSwfFromPage() }
             override fun onFlashDiagnostics() { showFlashDiagnostics() }
             override fun hasSeer2Shortcuts() = isSeer2Session(webView.url ?: currentUrl)
-            override fun onOpenSeer2Shortcuts() { showSeer2Shortcuts(this@GameActivity) }
+            override fun onOpenSeer2Shortcuts() {
+                val url = webView.url
+                val openCatalog: (() -> Unit)? = if (NavHelper.isSeer2Player(url) && Uri.parse(url).path == "/player.html") {
+                    {
+                        webView.evaluateJavascript("typeof window.openSeer2Catalog === 'function' && window.openSeer2Catalog()") {
+                            if (it != "true") Toast.makeText(this@GameActivity, R.string.seer2_catalog_unavailable, Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } else null
+                showSeer2Shortcuts(this@GameActivity, openCatalog)
+            }
             override fun hasLocalResources() = localSwfUri != null &&
                 Uri.parse(webView.url.orEmpty()).getQueryParameter("swf")?.let {
                     it == GameWebViewClient.LOCAL_MOVIE_URL || it.startsWith("https://flash.local/local.swf")

@@ -48,6 +48,24 @@
     border: 1px solid #90b6ec; border-radius: 4px; padding: 6px 10px;
     color: #fff; background: #294b78; font: inherit;
   }
+  #seer2-catalog {
+    position: fixed; z-index: 21; left: 12px; top: 12px;
+    width: min(322px, calc(100vw - 24px)); max-height: calc(80vh - 24px);
+    overflow: auto; padding: 12px; border: 1px solid #647c9c; border-radius: 8px;
+    background: #172843; color: #f4f7ff; font-size: 14px;
+  }
+  #seer2-catalog header {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  #seer2-catalog h2 { font-size: 16px; }
+  #seer2-catalog p { margin: 8px 0; line-height: 1.45; }
+  #seer2-catalog details { border-top: 1px solid #647c9c; padding: 6px 0; }
+  #seer2-catalog summary { padding: 4px 0; cursor: pointer; }
+  #seer2-catalog button {
+    padding: 8px; border: 1px solid #647c9c; border-radius: 4px;
+    background: #294b78; color: inherit; font: inherit;
+  }
+  .seer2-catalog-entries { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 6px; }
 </style>
 </head>
 <body>
@@ -102,6 +120,11 @@
 
     var seer2Tcp = IS_SEER2 && SWF_URL === 'https://flash.local/_seer2/Client.swf' &&
       BASE_URL === 'https://flash.local/_seer2/' && window.installSeer2Socket && window.installSeer2Socket();
+    if (IS_SEER2 && ENGINE === 'ruffle' && SWF_URL === 'https://flash.local/_seer2/Client.swf') {
+      var catalog = document.createElement('script');
+      catalog.src = 'seer2-catalog.js';
+      document.head.appendChild(catalog);
+    }
     var bundledPath = seer2Tcp ? 'https://flash.local/ruffle/seer2/' : 'https://flash.local/ruffle/';
     var ruffleUrl = (!IS_SEER2 && CDN_URL) || bundledPath + 'ruffle.js';
     var rufflePath = (!IS_SEER2 && CDN_PATH) || bundledPath;

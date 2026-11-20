@@ -14,20 +14,20 @@ private data class Seer2Shortcut(
     @StringRes val searchTerm: Int? = null
 )
 
-internal fun showSeer2Shortcuts(context: Context) {
+internal fun showSeer2Shortcuts(context: Context, openCatalog: (() -> Unit)? = null) {
     val shortcuts = listOf(
         Seer2Shortcut(R.string.seer2_unlock_title, R.string.seer2_unlock_path),
         Seer2Shortcut(R.string.seer2_team_title, R.string.seer2_team_path, R.string.seer2_team_search),
         Seer2Shortcut(R.string.seer2_pet_title, R.string.seer2_pet_path, R.string.seer2_pet_search)
     )
-    AlertDialog.Builder(context)
+    val menu = AlertDialog.Builder(context)
         .setTitle(R.string.seer2_shortcuts)
         .setItems(shortcuts.map { context.getString(it.title) }.toTypedArray()) { _, index ->
             val shortcut = shortcuts[index]
             val detail = AlertDialog.Builder(context)
                 .setTitle(shortcut.title)
                 .setMessage(shortcut.instructions)
-                .setNegativeButton(R.string.back) { _, _ -> showSeer2Shortcuts(context) }
+                .setNegativeButton(R.string.back) { _, _ -> showSeer2Shortcuts(context, openCatalog) }
                 .setPositiveButton(R.string.close, null)
             shortcut.searchTerm?.let { term ->
                 detail.setNeutralButton(R.string.seer2_copy_search_term) { _, _ ->
@@ -40,5 +40,8 @@ internal fun showSeer2Shortcuts(context: Context) {
             detail.show()
         }
         .setNegativeButton(R.string.close, null)
-        .show()
+    if (openCatalog != null) {
+        menu.setPositiveButton(R.string.seer2_catalog_open) { _, _ -> openCatalog() }
+    }
+    menu.show()
 }
