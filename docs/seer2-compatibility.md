@@ -14,6 +14,8 @@ WAFlash 2.8.27 在 Chromium 中成功接收完整的 301,535 字节登录模块�
 
 官方登录模块打开账号表单时会读取 `sr2login.61.com/ip.txt`，成功后才收起等待动画。3.3.6 的真机报告显示三条 HTTPS 查询均超时。3.3.7 按官方 `config/Server.xml` 中的原始 HTTP 地址转发三条公开查询。代理只处理限定的 `/ip.txt` GET 请求，不转发 Cookie 或请求体。同域名重定向可以升级到 HTTPS，HTTPS 证书仍由系统验证。查询失败或超时后，播放器显示原因及「重新加载」。3.3.7 的真机报告确认三条 HTTP 查询均返回 200 和有效地址，启动时的默认查询和点电信登录后的地址查询均已交付给 WebView。
 
+3.3.14 在官服地址查询遇到超时、服务错误或无效响应时，增加一次德国镜像的 HTTPS 公开查询。返回的公网 IPv4 地址必须和本机解析的官服域名相符，且端口必须为 1863。默认线路允许匹配任一官服线路，明确选择电信或网通时只核验所选线路。通过后，手机仍直连官服游戏端口。诊断面板可区分「备用地址已通过官服域名核验」和后续 TCP 连接结果。
+
 官方 `LoginModule.swf` 的 `LoginAgent.onIOError` 将 Socket I/O 失败显示为「服务器没有开启」。用官方 SWF 和本地模拟地址回放登录时，内置 Ruffle 0.4.1 输出 `Missing WebSocket proxy`，随后原版界面弹出同样的消息。回放期间没有发起 WebSocket 或向外部发送登录请求。Ruffle 网页版会在没有匹配代理时直接向 Flash 报告连接失败。[Ruffle 0.4.1 的 Socket 实现](https://github.com/ruffle-rs/ruffle/blob/v0.4.1/web/src/navigator.rs#L494-L516)
 
 3.3.7 的真机报告显示，电信和网通的 1863 端口可建立 TCP 连接，TLS 握手或证书校验失败。3.3.8 的专用 Ruffle 构建把 AS3 `flash.net.Socket` 交给 Android 原生 TCP 套接字。登录模块继续使用淘米原版协议，**密码摘要和登录票据经没有 TLS 的 TCP 连接发送**。其他网页的 TLS 验证使用系统默认行为。

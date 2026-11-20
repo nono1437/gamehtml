@@ -36,7 +36,7 @@ class FlashDiagnostics {
             return
         }
         val name = when {
-            message == "FlashDiagnostic seer2.discovery.timeout" -> "登录服务器地址查询超时（12 秒）"
+            message == "FlashDiagnostic seer2.discovery.timeout" -> "登录服务器地址查询超时（18 秒）"
             message == "FlashDiagnostic seer2.discovery.error" -> "登录服务器地址查询连接失败"
             message == "FlashDiagnostic ruffle.root.ready" -> "Ruffle 已加载启动 SWF"
             message == "FlashDiagnostic ruffle.root.error" -> "Ruffle 启动 SWF 加载失败"

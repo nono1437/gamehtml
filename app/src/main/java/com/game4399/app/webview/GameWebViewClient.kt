@@ -15,6 +15,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
+import java.net.InetAddress
 import java.net.URL
 
 /**
@@ -84,7 +85,10 @@ open class GameWebViewClient(
                 val cache = if (NavHelper.isSeer2Player(source) && !discovery) {
                     File(view.context.cacheDir, "seer2-assets")
                 } else null
-                return interceptRemote(upstream, request, Seer2Assets.ENTRY, seer2 = true, resourceCache = cache)
+                val response = interceptRemote(upstream, request, Seer2Assets.ENTRY, seer2 = true, resourceCache = cache)
+                return if (discovery && request.method == "GET" && Seer2DiscoveryFallback.shouldRetry(response.statusCode)) {
+                    interceptDiscoveryFallback(upstream, source) ?: response
+                } else response
             }
             RemoteSwfProxy.unwrap(url)?.let {
                 if (!isPlayer(source) || request.isForMainFrame) return assetResponse(403)
@@ -330,6 +334,39 @@ open class GameWebViewClient(
             if (output.size() + count > limit) throw java.io.IOException("Asset too large")
             output.write(buffer, 0, count)
         }
+    }
+
+    private fun interceptDiscoveryFallback(officialUrl: String, source: String?): WebResourceResponse? {
+        val mirror = Seer2DiscoveryFallback.mirrorUrl(officialUrl) ?: return null
+        val started = SystemClock.elapsedRealtime()
+        var status: Int? = null
+        val verified = try {
+            val connection = FlashHttp.open(mirror, null, userAgent, timeoutMillis = 2500, allowRedirect = { false })
+            try {
+                status = connection.responseCode
+                if (status != 200) null else {
+                    val bytes = connection.inputStream.use { readAsset(it, Seer2Assets.DISCOVERY_MAX_BYTES) }
+                    val length = connection.getHeaderField("Content-Length")?.toLongOrNull()
+                    if (length != null && bytes.size.toLong() != length) null else {
+                        Seer2DiscoveryFallback.verify(officialUrl, bytes) { host ->
+                            runCatching { InetAddress.getAllByName(host).mapNotNull { it.hostAddress } }
+                                .getOrDefault(emptyList())
+                        }
+                    }
+                }
+            } finally {
+                connection.disconnect()
+            }
+        } catch (_: java.io.IOException) {
+            null
+        }
+        diagnostics.record(
+            if (verified != null) "备用地址已通过官服域名核验" else "备用查询失败或地址未通过核验",
+            mirror, status, verified?.size?.toLong(), SystemClock.elapsedRealtime() - started
+        )
+        if (verified == null || source != pageUrl) return null
+        seer2SocketBridge?.receiverFor(source, "/ip.txt")?.invoke(verified)
+        return assetResponse(200, verified)
     }
 
     private fun interceptRemote(

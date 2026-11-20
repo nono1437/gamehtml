@@ -228,7 +228,7 @@ internal class Seer2SocketRelay(
         fun describeTarget(host: String, port: Int): String = publicAddress(host, port)?.let { "${it.host}:${it.port}" }
             ?: "地址格式不受支持或为保留地址"
 
-        private fun publicAddress(host: String, port: Int): Address? {
+        fun publicAddress(host: String, port: Int): Address? {
             val trimmed = host.trim()
             if (port !in 1..65535 || trimmed.length > 15) return null
             val parts = trimmed.split('.')
