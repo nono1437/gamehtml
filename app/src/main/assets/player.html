@@ -120,6 +120,19 @@
 
     var seer2Tcp = IS_SEER2 && SWF_URL === 'https://flash.local/_seer2/Client.swf' &&
       BASE_URL === 'https://flash.local/_seer2/' && window.installSeer2Socket && window.installSeer2Socket();
+    function reportGameReady() {
+      document.getElementById('loading').style.display = 'none';
+      console.info('FlashDiagnostic ruffle.root.ready');
+    }
+    function reportGameError() {
+      document.getElementById('loading').style.display = '';
+      loadText.textContent = 'SWF 加载失败，请查看资源诊断';
+      console.error('FlashDiagnostic ruffle.root.error');
+    }
+    if (seer2Tcp) {
+      window.seer2GameLoadReady = reportGameReady;
+      window.seer2GameLoadFailed = reportGameError;
+    }
     if (IS_SEER2 && ENGINE === 'ruffle' && SWF_URL === 'https://flash.local/_seer2/Client.swf') {
       var catalog = document.createElement('script');
       catalog.src = 'seer2-catalog.js';
@@ -270,17 +283,21 @@
         player.style.height = '100%';
         player.style.display = 'block';
         player.style.margin = 'auto';
-        var opt = { url: SWF_URL, allowScriptAccess: true };
+        var opt = {
+          url: seer2Tcp ? 'https://flash.local/seer2-routes.swf' : SWF_URL,
+          allowScriptAccess: true
+        };
         if (BASE_URL) opt.base = BASE_URL;
-        player.addEventListener('loadeddata', function () {
-          document.getElementById('loading').style.display = 'none';
-          console.info('FlashDiagnostic ruffle.root.ready');
-        }, { once: true });
+        if (!seer2Tcp) player.addEventListener('loadeddata', reportGameReady, { once: true });
         player.ruffle().load(opt).then(function () {
-          document.getElementById('loading').style.display = 'none';
-        }, function () {
-          loadText.textContent = 'SWF 加载失败，请查看资源诊断';
-          console.error('FlashDiagnostic ruffle.root.error');
+          if (!seer2Tcp) document.getElementById('loading').style.display = 'none';
+        }, function() {
+          if (!seer2Tcp) {
+            reportGameError();
+            return;
+          }
+          player.addEventListener('loadeddata', reportGameReady, { once: true });
+          player.ruffle().load(Object.assign({}, opt, {url: SWF_URL})).catch(reportGameError);
         });
       } catch (e) {
         loadText.textContent = '加载失败: ' + e.message;

@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="seer2_shortcuts">约瑟快捷路径</string>
-    <string name="seer2_catalog_open">图鉴快捷输入</string>
-    <string name="seer2_catalog_unavailable">图鉴快捷输入还没加载，请稍后重试</string>
+    <string name="seer2_catalog_open">游戏内快捷入口</string>
+    <string name="seer2_catalog_unavailable">游戏内快捷入口还没加载，请稍后重试</string>
     <string name="seer2_unlock_title">新手任务与图鉴</string>
     <string name="seer2_unlock_path">进图后，跟着当前新手任务的提示或场景箭头，依次完成对话和任务目标。任务要求交付或领奖时，先按提示完成，再查看主界面的图鉴是否已解锁。\n\n如果某一步在手机上点了没反应，先记下任务名和卡住的步骤。可以用同一区、同一角色在电脑端继续这一段，再回手机查图鉴。</string>
     <string name="seer2_team_title">传说的追溯 · 三傻</string>

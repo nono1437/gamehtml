@@ -20,6 +20,11 @@
       [2572, '奥比休斯圣徒'], [2573, '泰尔瑞斯圣徒']]],
     ['背包和活动', [], '经验和星魂在背包查看。战神的天阶及扭蛋牌相关活动从日历查找。']
   ];
+  var routes = [
+    ['vip-park', 'VIP 乐园'],
+    ['king-ruins', '王者遗迹'],
+    ['legend', '三傻 · 传说的追溯']
+  ];
 
   function element(tag, text) {
     var node = document.createElement(tag);
@@ -41,6 +46,15 @@
     return true;
   }
 
+  function openRoute(route) {
+    var player = document.querySelector('#stage > ruffle-player');
+    try {
+      return player && player.ruffle().callExternalInterface('seer2OpenRoute', route);
+    } catch (_) {
+      return null;
+    }
+  }
+
   function buildCatalog() {
     var panel = element('aside');
     panel.id = 'seer2-catalog';
@@ -49,15 +63,36 @@
     panel.addEventListener('mousedown', function (event) { event.preventDefault(); });
 
     var header = element('header');
-    var title = element('h2', '图鉴快捷输入');
+    var title = element('h2', '约瑟传说快捷入口');
     title.id = 'seer2-catalog-title';
     var close = element('button', '收起');
     close.type = 'button';
     close.addEventListener('click', function () { panel.hidden = true; });
     header.append(title, close);
-    var status = element('p', '先点游戏里的图鉴搜索框，再点下方精灵。');
+    var status = element('p', '进入场景后可打开地图或活动。');
     status.setAttribute('role', 'status');
     panel.append(header, status);
+
+    var destinations = element('div');
+    destinations.className = 'seer2-catalog-entries';
+    routes.forEach(function (route) {
+      var button = element('button', route[1]);
+      button.type = 'button';
+      button.addEventListener('click', function () {
+        var outcome = openRoute(route[0]);
+        if (outcome === 'requested' || outcome === 'already-there') {
+          panel.hidden = true;
+          return;
+        }
+        var messages = {
+          'not-ready': '请先登录并进入游戏场景。',
+          'restricted': '游戏限制，当前无法进入这张地图。'
+        };
+        status.textContent = messages[outcome] || '当前游戏版本无法使用这个快捷入口。';
+      });
+      destinations.append(button);
+    });
+    panel.append(destinations, element('p', '图鉴快捷输入 · 先点游戏里的图鉴搜索框，再点下方精灵。'));
 
     groups.forEach(function (group, index) {
       var section = element('details');
