@@ -5,7 +5,6 @@ import android.net.Uri
 import android.net.http.SslError
 import android.os.SystemClock
 import android.webkit.CookieManager
-import android.webkit.RenderProcessGoneDetail
 import android.webkit.SslErrorHandler
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -37,7 +36,6 @@ open class GameWebViewClient(
         fun onProgress(progress: Int)
         fun onError(url: String?, errorCode: Int, description: String?)
         fun onSwfIntercepted(swfUrl: String, pageUrl: String)
-        fun onRendererGone()
         fun shouldInjectRuffle(url: String?): Boolean
         /** 获取本地 SWF 文件的真实 URI */
         fun getLocalSwfUri(): String?
@@ -512,17 +510,6 @@ open class GameWebViewClient(
             android.util.Log.w("GameWebViewClient", "asset not found: $assetPath", e)
             null
         }
-    }
-
-    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.O)
-    override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-        diagnostics.record(if (detail.didCrash()) "WebView 渲染进程崩溃" else "WebView 渲染进程被系统终止",
-            pageUrl)
-        runCatching { seer2SocketBridge?.close() }
-        (view.parent as? android.view.ViewGroup)?.removeView(view)
-        view.destroy()
-        callback.onRendererGone()
-        return true
     }
 
     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {

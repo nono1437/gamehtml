@@ -31,8 +31,7 @@ class WebFragment : Fragment() {
     private var _binding: FragmentWebBinding? = null
     private val binding get() = _binding!!
 
-    private var webView: GameWebView? = null
-    private var lastPageUrl: String? = null
+    private lateinit var webView: GameWebView
     private var defaultUrl: String = NavHelper.URL_4399_MOBILE
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -49,38 +48,22 @@ class WebFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        val initialView = binding.webView
-        val parent = initialView.parent as ViewGroup
-        val index = parent.indexOfChild(initialView)
-        val layout = initialView.layoutParams
-        attachWebView(initialView)
+        webView = binding.webView
+        webView.apply {
+            addJavascriptInterface(WebAppInterface(requireContext()), "Android")
+            webChromeClient = object : GameWebChromeClient(chromeCb) {}
+            webViewClient = object : GameWebViewClient(viewCb) {}
+        }
 
         // 取消下拉刷新，避免游戏操作误触发
         binding.swipeRefresh.isEnabled = false
-        binding.btnRetry.setOnClickListener {
-            val active = webView
-            if (active != null) {
-                active.reload()
-            } else {
-                val replacement = GameWebView(requireContext()).apply {
-                    id = R.id.webView
-                    setBackgroundColor(android.graphics.Color.WHITE)
-                }
-                parent.addView(replacement, index, layout)
-                attachWebView(replacement)
-                replacement.loadUrl(lastPageUrl ?: defaultUrl)
-            }
-        }
-        if (savedInstanceState == null || initialView.restoreState(savedInstanceState) == null) {
-            initialView.loadUrl(defaultUrl)
-        }
-    }
+        binding.btnRetry.setOnClickListener { webView.reload() }
 
-    private fun attachWebView(view: GameWebView) {
-        webView = view
-        view.addJavascriptInterface(WebAppInterface(requireContext()), "Android")
-        view.webChromeClient = object : GameWebChromeClient(chromeCb) {}
-        view.webViewClient = object : GameWebViewClient(viewCb) {}
+        if (savedInstanceState != null) {
+            webView.restoreState(savedInstanceState)
+        } else {
+            webView.loadUrl(defaultUrl)
+        }
     }
 
     private val chromeCb = object : GameWebChromeClient.Callback {
@@ -95,7 +78,7 @@ class WebFragment : Fragment() {
         override fun onConsole(level: String, msg: String, sourceId: String?, line: Int) {}
         override fun onShowFullscreen(view: View, callback: android.webkit.WebChromeClient.CustomViewCallback) {
             // 网页全屏：隐藏 WebView，将全屏 View 添加到容器
-            webView?.visibility = View.GONE
+            binding.webView.visibility = View.GONE
             binding.progressBar.visibility = View.GONE
             binding.fullscreenContainer.removeAllViews()
             binding.fullscreenContainer.addView(view)
@@ -105,7 +88,7 @@ class WebFragment : Fragment() {
             // 退出全屏：移除全屏 View，恢复 WebView
             binding.fullscreenContainer.removeAllViews()
             binding.fullscreenContainer.visibility = View.GONE
-            webView?.visibility = View.VISIBLE
+            binding.webView.visibility = View.VISIBLE
         }
         override fun onFileChooser(
             cb: android.webkit.ValueCallback<Array<android.net.Uri>>, accept: String?
@@ -114,16 +97,7 @@ class WebFragment : Fragment() {
 
     private val viewCb = object : GameWebViewClient.Callback {
         override fun onPageStarted(url: String?) {
-            lastPageUrl = url
             binding.errorView.visibility = View.GONE
-        }
-        override fun onRendererGone() {
-            webView = null
-            val current = _binding ?: return
-            current.fullscreenContainer.removeAllViews()
-            current.fullscreenContainer.visibility = View.GONE
-            current.progressBar.visibility = View.GONE
-            current.errorView.visibility = View.VISIBLE
         }
         override fun onPageFinished(url: String?) {
             binding.swipeRefresh.isRefreshing = false
@@ -166,34 +140,31 @@ class WebFragment : Fragment() {
      * 在 WebViewClient.shouldOverrideUrlLoading 之外，这里用 HitTestResult 兜底。
      */
     /** 当前 WebView 是否可后退 */
-    fun canGoBack(): Boolean = webView?.canGoBack() == true
+    fun canGoBack(): Boolean = ::webView.isInitialized && webView.canGoBack()
 
     /** WebView 后退一步 */
     fun goBack() {
-        webView?.takeIf { it.canGoBack() }?.goBack()
+        if (::webView.isInitialized && webView.canGoBack()) webView.goBack()
     }
 
     override fun onResume() {
         super.onResume()
-        webView?.onResume()
+        webView.onResume()
     }
 
     override fun onPause() {
         super.onPause()
-        webView?.onPause()
+        webView.onPause()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        webView?.saveState(outState)
+        webView.saveState(outState)
     }
 
     override fun onDestroyView() {
-        webView?.let {
-            (it.parent as? ViewGroup)?.removeView(it)
-            it.destroy()
-        }
-        webView = null
+        (webView.parent as? ViewGroup)?.removeView(webView)
+        webView.destroy()
         super.onDestroyView()
         _binding = null
     }

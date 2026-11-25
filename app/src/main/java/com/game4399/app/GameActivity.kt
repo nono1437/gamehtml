@@ -69,7 +69,6 @@ class GameActivity : AppCompatActivity() {
     @Volatile private var localResourceTree: Uri? = null
     private val flashDiagnostics = FlashDiagnostics()
     private var officialConnectionCheckRunning = false
-    private var rendererGone = false
 
     private val localResourcePicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { tree ->
         if (tree != null) {
@@ -234,12 +233,6 @@ class GameActivity : AppCompatActivity() {
     }
 
     private val viewClientCallback = object : GameWebViewClient.Callback {
-        override fun onRendererGone() {
-            rendererGone = true
-            Toast.makeText(this@GameActivity, "游戏画面已中断，请重新打开游戏", Toast.LENGTH_LONG).show()
-            finish()
-        }
-
         override fun onPageStarted(url: String?) {
             // 页面导航时释放所有按键，防止旧页面的按键状态残留
             webView.releaseAllKeys()
@@ -498,7 +491,7 @@ class GameActivity : AppCompatActivity() {
         val discovery = gameWebViewClient.swfDiscovery
         val script = assets.open("discover-swf.js").bufferedReader().use { it.readText() }
         webView.evaluateJavascript(script) { json ->
-            if (isFinishing || isDestroyed || rendererGone || gameWebViewClient.swfDiscovery !== discovery) {
+            if (isFinishing || isDestroyed || gameWebViewClient.swfDiscovery !== discovery) {
                 return@evaluateJavascript
             }
             val links = buildList {
@@ -627,9 +620,6 @@ class GameActivity : AppCompatActivity() {
                     val status = connection.responseCode
                     if (status != 200) throw java.io.IOException("HTTP $status")
                     val expectedSize = connection.getHeaderField("Content-Length")?.toLongOrNull()
-                    if (expectedSize != null && expectedSize > MAX_SWF_DOWNLOAD_BYTES) {
-                        throw java.io.IOException("文件超过 64 MiB")
-                    }
                     val file = java.io.File.createTempFile("flash-", ".tmp", cacheDir)
                     pending = file
                     val size = connection.inputStream.use { input ->
@@ -641,7 +631,6 @@ class GameActivity : AppCompatActivity() {
                                 val count = input.read(chunk)
                                 if (count == -1) break
                                 bytes += count
-                                if (bytes > MAX_SWF_DOWNLOAD_BYTES) throw java.io.IOException("文件超过 64 MiB")
                                 output.write(chunk, 0, count)
                                 if (expectedSize != null && expectedSize > 0) {
                                     val percent = (bytes * 100 / expectedSize).coerceAtMost(100).toInt()
@@ -677,7 +666,7 @@ class GameActivity : AppCompatActivity() {
                         val reason = (result.exceptionOrNull() as? java.io.IOException)?.message.orEmpty()
                         val detail = when {
                             reason.startsWith("HTTP ") -> "（$reason）"
-                            reason in setOf("文件超过 64 MiB", "文件下载不完整", "下载结果不是有效的 SWF") -> "（$reason）"
+                            reason in setOf("文件下载不完整", "下载结果不是有效的 SWF") -> "（$reason）"
                             else -> ""
                         }
                         Toast.makeText(this, "SWF 获取失败$detail", Toast.LENGTH_LONG).show()
@@ -1446,7 +1435,6 @@ class GameActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        if (rendererGone) return
         // 释放所有虚拟手柄按下的按键，防止 Ruffle 角色持续移动
         webView.releaseAllKeys()
         // 明确挂起 Ruffle：同时停止帧、脚本和声音，避免切后台后 BGM 继续播放
@@ -1458,7 +1446,6 @@ class GameActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (rendererGone) return
         webView.onResume()
         runCatching { webView.evaluateJavascript(
             "(function(){try{if(window.__nonoResumeRuffle){window.__nonoResumeRuffle();return;}var ps=document.querySelectorAll('ruffle-player');for(var i=0;i<ps.length;i++){try{ps[i].ruffle(1).resume();}catch(x){try{ps[i].play();}catch(y){}}}}catch(e){}})();", null
@@ -1486,10 +1473,8 @@ class GameActivity : AppCompatActivity() {
     override fun onDestroy() {
         pendingSwfExport?.file?.delete()
         pendingSwfExport = null
-        if (::gameWebViewClient.isInitialized && !rendererGone) {
-            gameWebViewClient.seer2SocketBridge?.close()
-        }
-        if (::webView.isInitialized && !rendererGone) webView.apply {
+        if (::gameWebViewClient.isInitialized) gameWebViewClient.seer2SocketBridge?.close()
+        if (::webView.isInitialized) webView.apply {
             (parent as? android.view.ViewGroup)?.removeView(this)
             destroy()
         }
@@ -1497,7 +1482,6 @@ class GameActivity : AppCompatActivity() {
     }
 
     companion object {
-        private const val MAX_SWF_DOWNLOAD_BYTES = 64L * 1024 * 1024
         const val EXTRA_URL = "extra_url"
         const val EXTRA_TITLE = "extra_title"
         const val EXTRA_TYPE = "extra_type"
