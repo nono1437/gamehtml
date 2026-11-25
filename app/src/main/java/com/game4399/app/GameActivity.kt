@@ -15,18 +15,19 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.widget.doAfterTextChanged
 import com.game4399.app.data.FavoriteStore
 import com.game4399.app.data.GameType
 import com.game4399.app.data.PrefsManager
 import com.game4399.app.databinding.ActivityGameBinding
 import com.game4399.app.input.KeyMapper
-import com.game4399.app.ui.showSeer2Shortcuts
 import com.game4399.app.webview.FlashDiagnostics
 import com.game4399.app.webview.FlashHttp
 import com.game4399.app.webview.FlashPayload
 import com.game4399.app.webview.Seer2Assets
 import com.game4399.app.webview.Seer2OfficialConnection
 import com.game4399.app.webview.Seer2SocketBridge
+import com.game4399.app.webview.SwfDiscovery
 import com.game4399.app.webview.GameWebChromeClient
 import com.game4399.app.webview.GameWebView
 import com.game4399.app.webview.GameWebViewClient
@@ -53,8 +54,6 @@ class GameActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityGameBinding
     private lateinit var webView: GameWebView
-    /** 注入到 WebView 的 JS 接口引用（用于设置 SWF 提取回调） */
-    private lateinit var webAppInterface: WebAppInterface
     /** WebView 客户端引用（用于 onPageFinished 兜底注入 Flash 脚本） */
     private lateinit var gameWebViewClient: GameWebViewClient
 
@@ -70,6 +69,7 @@ class GameActivity : AppCompatActivity() {
     @Volatile private var localResourceTree: Uri? = null
     private val flashDiagnostics = FlashDiagnostics()
     private var officialConnectionCheckRunning = false
+    private var rendererGone = false
 
     private val localResourcePicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { tree ->
         if (tree != null) {
@@ -92,6 +92,19 @@ class GameActivity : AppCompatActivity() {
             }.isSuccess
             Toast.makeText(this, if (saved) "诊断日志已导出" else "诊断日志导出失败", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private data class SwfExport(val file: java.io.File, val title: String)
+
+    private var pendingSwfExport: SwfExport? = null
+    private var swfTransferRunning = false
+    private val swfExporter = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/x-shockwave-flash")
+    ) { uri ->
+        val export = pendingSwfExport
+        pendingSwfExport = null
+        if (export != null && uri == null) export.file.delete()
+        if (export != null && uri != null) saveDownloadedSwf(export, uri)
     }
 
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
@@ -142,7 +155,7 @@ class GameActivity : AppCompatActivity() {
 
     // ---------------- WebView ----------------
     private fun setupWebView() {
-        webAppInterface = WebAppInterface(this)
+        val webAppInterface = WebAppInterface(this)
         gameWebViewClient = object : GameWebViewClient(viewClientCallback, flashDiagnostics) {}.apply {
             seer2SocketBridge = Seer2SocketBridge(webView, flashDiagnostics)
         }
@@ -221,6 +234,12 @@ class GameActivity : AppCompatActivity() {
     }
 
     private val viewClientCallback = object : GameWebViewClient.Callback {
+        override fun onRendererGone() {
+            rendererGone = true
+            Toast.makeText(this@GameActivity, "游戏画面已中断，请重新打开游戏", Toast.LENGTH_LONG).show()
+            finish()
+        }
+
         override fun onPageStarted(url: String?) {
             // 页面导航时释放所有按键，防止旧页面的按键状态残留
             webView.releaseAllKeys()
@@ -458,18 +477,6 @@ class GameActivity : AppCompatActivity() {
             override fun onClose() { finish() }
             override fun onExtractSwf() { extractSwfFromPage() }
             override fun onFlashDiagnostics() { showFlashDiagnostics() }
-            override fun hasSeer2Shortcuts() = isSeer2Session(webView.url ?: currentUrl)
-            override fun onOpenSeer2Shortcuts() {
-                val url = webView.url
-                val openCatalog: (() -> Unit)? = if (NavHelper.isSeer2Player(url) && Uri.parse(url).path == "/player.html") {
-                    {
-                        webView.evaluateJavascript("typeof window.openSeer2Catalog === 'function' && window.openSeer2Catalog()") {
-                            if (it != "true") Toast.makeText(this@GameActivity, R.string.seer2_catalog_unavailable, Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                } else null
-                showSeer2Shortcuts(this@GameActivity, openCatalog)
-            }
             override fun hasLocalResources() = localSwfUri != null &&
                 Uri.parse(webView.url.orEmpty()).getQueryParameter("swf")?.let {
                     it == GameWebViewClient.LOCAL_MOVIE_URL || it.startsWith("https://flash.local/local.swf")
@@ -487,64 +494,80 @@ class GameActivity : AppCompatActivity() {
 
     // ---------------- SWF 提取 ----------------
 
-    /**
-     * 从当前网页提取 SWF 文件。
-     * 注入 JS 嗅探器扫描页面中的 SWF URL（DOM 元素、iframe、Performance API、网络请求），
-     * 发现后通过 [WebAppInterface.onSwfFound] 回调到原生，弹出选择对话框。
-     */
     private fun extractSwfFromPage() {
-        Toast.makeText(this, "正在扫描页面中的 SWF...", Toast.LENGTH_SHORT).show()
-
-        // 设置回调：JS 嗅探器通过 window.Android.onSwfFound(json) 回调到原生
-        webAppInterface.swfExtractCallback = { json ->
-            showSwfExtractDialog(json)
+        val discovery = gameWebViewClient.swfDiscovery
+        val script = assets.open("discover-swf.js").bufferedReader().use { it.readText() }
+        webView.evaluateJavascript(script) { json ->
+            if (isFinishing || isDestroyed || rendererGone || gameWebViewClient.swfDiscovery !== discovery) {
+                return@evaluateJavascript
+            }
+            val links = buildList {
+                if (json != null && json.length <= 2 * 1024 * 1024) {
+                    val array = runCatching { org.json.JSONArray(json) }.getOrNull()
+                    if (array != null) {
+                        for (i in 0 until minOf(array.length(), SwfDiscovery.MAX_RESULTS)) {
+                            val item = array.optJSONArray(i) ?: continue
+                            add(item.optString(0) to item.optString(1))
+                        }
+                    }
+                }
+            }
+            showSwfExtractDialog(discovery.results(links))
         }
-
-        webView.evaluateJavascript(SWF_SNIFFER_SCRIPT, null)
     }
 
-    /**
-     * 显示 SWF 提取结果对话框，供用户选择下载或播放。
-     */
-    private fun showSwfExtractDialog(json: String) {
-        try {
-            val arr = org.json.JSONArray(json)
-            if (arr.length() == 0) {
-                Toast.makeText(this, "未在页面中发现 SWF 文件", Toast.LENGTH_SHORT).show()
-                return
-            }
-
-            val items = mutableListOf<String>()
-            val swfUrls = mutableListOf<String>()
-            for (i in 0 until arr.length()) {
-                val obj = arr.optJSONObject(i) ?: continue
-                val url = obj.optString("url", "")
-                val title = obj.optString("title", "")
-                val size = obj.optString("size", "")
-                if (url.isNotEmpty()) {
-                    val display = if (title.isNotEmpty()) "$title\n$url" else url
-                    items.add(if (size.isNotEmpty()) "$display ($size)" else display)
-                    swfUrls.add(url)
-                }
-            }
-
-            if (items.isEmpty()) {
-                Toast.makeText(this, "未在页面中发现 SWF 文件", Toast.LENGTH_SHORT).show()
-                return
-            }
-
-            val labels = items.toTypedArray()
-            androidx.appcompat.app.AlertDialog.Builder(this)
-                .setTitle("发现 ${items.size} 个 SWF 文件")
-                .setItems(labels) { _, which ->
-                    val swfUrl = swfUrls[which]
-                    showSwfActionDialog(swfUrl)
-                }
-                .setNegativeButton("关闭", null)
-                .show()
-        } catch (e: Exception) {
-            Toast.makeText(this, "解析 SWF 列表失败: ${e.message}", Toast.LENGTH_SHORT).show()
+    private fun showSwfExtractDialog(results: List<SwfDiscovery.Result>) {
+        if (results.isEmpty()) {
+            Toast.makeText(this, "未在当前页面发现可获取的 SWF", Toast.LENGTH_SHORT).show()
+            return
         }
+
+        val container = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            isFocusableInTouchMode = true
+        }
+        val search = android.widget.EditText(this).apply {
+            hint = "搜索文件名、域名或路径"
+            setSingleLine()
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        }
+        val list = android.widget.ListView(this)
+        val adapter = android.widget.ArrayAdapter<String>(this, android.R.layout.simple_list_item_1)
+        list.adapter = adapter
+        container.addView(search)
+        container.addView(list, android.widget.LinearLayout.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setView(container)
+            .setNegativeButton("关闭", null)
+            .create()
+
+        var visible = results
+        fun update(query: String) {
+            val terms = query.trim().split(Regex("\\s+")).filter(String::isNotEmpty)
+            visible = results.filter { result ->
+                terms.all { result.title.contains(it, true) || result.displayUrl.contains(it, true) }
+            }
+            adapter.setNotifyOnChange(false)
+            adapter.clear()
+            adapter.addAll(visible.map { result ->
+                val size = result.size?.let { " · ${android.text.format.Formatter.formatShortFileSize(this, it)}" }.orEmpty()
+                "${result.title}$size\n${result.displayUrl}"
+            })
+            adapter.notifyDataSetChanged()
+            dialog.setTitle("SWF 文件 · ${visible.size}/${results.size}")
+        }
+        search.doAfterTextChanged { update(it.toString()) }
+        list.setOnItemClickListener { _, _, position, _ ->
+            val result = visible.getOrNull(position) ?: return@setOnItemClickListener
+            dialog.dismiss()
+            showSwfActionDialog(result.url)
+        }
+        update("")
+        container.requestFocus()
+        dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN)
+        dialog.show()
     }
 
     /**
@@ -572,145 +595,133 @@ class GameActivity : AppCompatActivity() {
         Toast.makeText(this, "正在用${PrefsManager.flashEngine}引擎加载...", Toast.LENGTH_SHORT).show()
     }
 
-    /**
-     * 下载 SWF 文件到本地存储。
-     * 下载完成后可选择用内置引擎播放。
-     */
     private fun downloadSwf(swfUrl: String) {
-        // 使用 currentUrl（已在主线程赋值），避免在后台线程访问 webView.url 触发线程违规
+        if (pendingSwfExport != null || swfTransferRunning) return
+        swfTransferRunning = true
         val pageUrl = currentUrl.ifEmpty { swfUrl }
-
-        // 创建进度对话框
-        val progressDialog = android.app.ProgressDialog(this).apply {
-            setTitle("下载 SWF")
-            setMessage("正在连接服务器...")
-            setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL)
-            isIndeterminate = false
-            max = 100
-            progress = 0
-            setCancelable(true)
-        }
-        progressDialog.show()
-
         val userAgent = webView.settings.userAgentString
-        val downloadThread = Thread {
-            var pendingFile: java.io.File? = null
-            var conn: java.net.HttpURLConnection? = null
-            var fileStream: java.io.FileOutputStream? = null
-            try {
+        val filename = Uri.parse(swfUrl).lastPathSegment.orEmpty()
+            .replace(Regex("[^\\p{L}\\p{N}_.-]"), "_").trim('.').take(110).ifEmpty { "game" }
+            .let { if (it.endsWith(".swf", true)) it else "$it.swf" }
+        val progressDialog = android.app.ProgressDialog(this).apply {
+            setTitle("正在获取 SWF")
+            setMessage(filename)
+            setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL)
+            isIndeterminate = true
+            max = 100
+            setCancelable(true)
+            show()
+        }
+        val cancelled = java.util.concurrent.atomic.AtomicBoolean()
+        progressDialog.setOnCancelListener { cancelled.set(true) }
+        Thread {
+            var pending: java.io.File? = null
+            val result = runCatching {
                 val publicAsset = Seer2Assets.publicAsset(swfUrl)
                 val cookies: ((String) -> String?)? = if (publicAsset != null) null else { address ->
                     android.webkit.CookieManager.getInstance().getCookie(address)
                 }
-                conn = FlashHttp.open(publicAsset ?: swfUrl, pageUrl, userAgent, cookies = cookies,
+                val connection = FlashHttp.open(publicAsset ?: swfUrl, pageUrl, userAgent, cookies = cookies,
                     allowRedirect = { target -> publicAsset == null || Seer2Assets.publicAsset(target.toString()) != null })
-                if (conn.responseCode !in 200..299) {
-                    runOnUiThread {
-                        progressDialog.dismiss()
-                        Toast.makeText(this, "下载失败: HTTP ${conn.responseCode}", Toast.LENGTH_LONG).show()
+                try {
+                    val status = connection.responseCode
+                    if (status != 200) throw java.io.IOException("HTTP $status")
+                    val expectedSize = connection.getHeaderField("Content-Length")?.toLongOrNull()
+                    if (expectedSize != null && expectedSize > MAX_SWF_DOWNLOAD_BYTES) {
+                        throw java.io.IOException("文件超过 64 MiB")
                     }
-                    return@Thread
-                }
-
-                val totalBytes = conn.contentLength  // -1 if unknown
-                val filename = swfUrl.substringAfterLast("/").substringBefore("?").let {
-                    if (it.endsWith(".swf", ignoreCase = true)) it else "$it.swf"
-                }.ifBlank { "game.swf" }
-
-                // 准备目标文件
-                val dir = android.os.Environment.getExternalStoragePublicDirectory(
-                    android.os.Environment.DIRECTORY_DOWNLOADS
-                )
-                val swfDir = java.io.File(dir, "GameHTML")
-                if (!swfDir.exists()) swfDir.mkdirs()
-                val file = java.io.File(swfDir, filename)
-                // 使用 .tmp 临时文件，下载完成后再重命名
-                val tmpFile = java.io.File.createTempFile("flash-", ".tmp", swfDir)
-                pendingFile = tmpFile
-
-                // 更新对话框：显示文件大小
-                runOnUiThread {
-                    if (totalBytes > 0) {
-                        progressDialog.setMessage("下载中: $filename (${totalBytes / 1024}KB)")
-                    } else {
-                        progressDialog.setMessage("下载中: $filename (大小未知)")
-                        progressDialog.isIndeterminate = true
-                    }
-                }
-
-                // 直接写入文件，不缓存在内存中（避免大文件 OOM）
-                fileStream = java.io.FileOutputStream(tmpFile)
-                val input = conn.inputStream
-                val chunk = ByteArray(8192)
-                var bytesRead: Int
-                var totalRead = 0
-                var lastUpdatePercent = -1
-                while (true) {
-                    if (Thread.currentThread().isInterrupted) {
-                        input.close()
-                        fileStream.close()
-                        tmpFile.delete()
-                        return@Thread
-                    }
-                    bytesRead = input.read(chunk)
-                    if (bytesRead == -1) break
-                    // 直接写入文件，不在内存中累积
-                    fileStream.write(chunk, 0, bytesRead)
-                    totalRead += bytesRead
-
-                    // 更新进度（避免过于频繁更新 UI）
-                    if (totalBytes > 0) {
-                        val percent = (totalRead * 100 / totalBytes)
-                        if (percent != lastUpdatePercent) {
-                            lastUpdatePercent = percent
-                            runOnUiThread {
-                                if (!progressDialog.isShowing) return@runOnUiThread
-                                progressDialog.progress = percent
+                    val file = java.io.File.createTempFile("flash-", ".tmp", cacheDir)
+                    pending = file
+                    val size = connection.inputStream.use { input ->
+                        file.outputStream().use { output ->
+                            val chunk = ByteArray(16 * 1024)
+                            var bytes = 0L
+                            var lastPercent = -1
+                            while (!cancelled.get()) {
+                                val count = input.read(chunk)
+                                if (count == -1) break
+                                bytes += count
+                                if (bytes > MAX_SWF_DOWNLOAD_BYTES) throw java.io.IOException("文件超过 64 MiB")
+                                output.write(chunk, 0, count)
+                                if (expectedSize != null && expectedSize > 0) {
+                                    val percent = (bytes * 100 / expectedSize).coerceAtMost(100).toInt()
+                                    if (percent != lastPercent) {
+                                        lastPercent = percent
+                                        runOnUiThread {
+                                            if (progressDialog.isShowing) {
+                                                progressDialog.isIndeterminate = false
+                                                progressDialog.progress = percent
+                                            }
+                                        }
+                                    }
+                                }
                             }
+                            bytes
                         }
                     }
+                    val header = file.inputStream().use { it.readNBytesCompat(8) }
+                    if (expectedSize != null && expectedSize != size) throw java.io.IOException("文件下载不完整")
+                    if (!FlashPayload.isSwf(header, size)) throw java.io.IOException("下载结果不是有效的 SWF")
+                    file
+                } finally {
+                    connection.disconnect()
                 }
-                input.close()
-                fileStream.flush()
-                fileStream.close()
-                fileStream = null
-
-                val header = tmpFile.inputStream().use { it.readNBytesCompat(8) }
-                if (!FlashPayload.isSwf(header, totalRead.toLong()) ||
-                    (totalBytes >= 0 && totalBytes != totalRead)) {
-                    throw java.io.IOException("下载结果不是有效的 SWF 文件")
+            }
+            runOnUiThread {
+                swfTransferRunning = false
+                if (progressDialog.isShowing) progressDialog.dismiss()
+                val file = result.getOrNull()
+                if (cancelled.get() || isFinishing || isDestroyed || file == null) {
+                    pending?.delete()
+                    if (!cancelled.get() && !isFinishing && !isDestroyed) {
+                        val reason = (result.exceptionOrNull() as? java.io.IOException)?.message.orEmpty()
+                        val detail = when {
+                            reason.startsWith("HTTP ") -> "（$reason）"
+                            reason in setOf("文件超过 64 MiB", "文件下载不完整", "下载结果不是有效的 SWF") -> "（$reason）"
+                            else -> ""
+                        }
+                        Toast.makeText(this, "SWF 获取失败$detail", Toast.LENGTH_LONG).show()
+                    }
+                } else {
+                    pendingSwfExport = SwfExport(file, filename)
+                    if (runCatching { swfExporter.launch(filename) }.isFailure) {
+                        pendingSwfExport = null
+                        file.delete()
+                        Toast.makeText(this, "无法打开文件保存器", Toast.LENGTH_SHORT).show()
+                    }
                 }
-                if (!tmpFile.renameTo(file)) throw java.io.IOException("无法保存 SWF 文件")
+            }
+        }.start()
+    }
 
-                val fileSizeKB = totalRead / 1024
-                runOnUiThread {
-                    progressDialog.dismiss()
-                    Toast.makeText(this, "已下载: ${file.absolutePath} (${fileSizeKB}KB)", Toast.LENGTH_LONG).show()
-                    // 提示是否播放
+    private fun saveDownloadedSwf(export: SwfExport, uri: Uri) {
+        swfTransferRunning = true
+        Thread {
+            val saved = runCatching {
+                val output = checkNotNull(contentResolver.openOutputStream(uri, "wt"))
+                output.use { target -> export.file.inputStream().use { it.copyTo(target) } }
+            }.isSuccess
+            if (!saved) runCatching { android.provider.DocumentsContract.deleteDocument(contentResolver, uri) }
+            export.file.delete()
+            runOnUiThread {
+                swfTransferRunning = false
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (saved) {
                     androidx.appcompat.app.AlertDialog.Builder(this)
-                        .setTitle("下载完成")
-                        .setMessage("已保存到: ${file.absolutePath}\n\n是否用内置引擎播放？")
+                        .setTitle("SWF 已保存")
+                        .setMessage(export.title)
                         .setPositiveButton("播放") { _, _ ->
                             localResourceTree = null
-                            localSwfUri = Uri.fromFile(file).toString()
-                            playLocalSwf(filename)
+                            localSwfUri = uri.toString()
+                            playLocalSwf(export.title)
                         }
                         .setNegativeButton("关闭", null)
                         .show()
+                } else {
+                    Toast.makeText(this, "保存失败", Toast.LENGTH_SHORT).show()
                 }
-            } catch (e: Exception) {
-                try { fileStream?.close() } catch(ignored: Exception) {}
-                runOnUiThread {
-                    progressDialog.dismiss()
-                    Toast.makeText(this, "下载失败: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-            } finally {
-                conn?.disconnect()
-                pendingFile?.delete()
             }
-        }
-        progressDialog.setOnCancelListener { downloadThread.interrupt() }
-        downloadThread.start()
+        }.start()
     }
 
     private fun java.io.InputStream.readNBytesCompat(count: Int): ByteArray {
@@ -1435,6 +1446,7 @@ class GameActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
+        if (rendererGone) return
         // 释放所有虚拟手柄按下的按键，防止 Ruffle 角色持续移动
         webView.releaseAllKeys()
         // 明确挂起 Ruffle：同时停止帧、脚本和声音，避免切后台后 BGM 继续播放
@@ -1446,6 +1458,7 @@ class GameActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (rendererGone) return
         webView.onResume()
         runCatching { webView.evaluateJavascript(
             "(function(){try{if(window.__nonoResumeRuffle){window.__nonoResumeRuffle();return;}var ps=document.querySelectorAll('ruffle-player');for(var i=0;i<ps.length;i++){try{ps[i].ruffle(1).resume();}catch(x){try{ps[i].play();}catch(y){}}}}catch(e){}})();", null
@@ -1471,8 +1484,12 @@ class GameActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        if (::gameWebViewClient.isInitialized) gameWebViewClient.seer2SocketBridge?.close()
-        if (::webView.isInitialized) webView.apply {
+        pendingSwfExport?.file?.delete()
+        pendingSwfExport = null
+        if (::gameWebViewClient.isInitialized && !rendererGone) {
+            gameWebViewClient.seer2SocketBridge?.close()
+        }
+        if (::webView.isInitialized && !rendererGone) webView.apply {
             (parent as? android.view.ViewGroup)?.removeView(this)
             destroy()
         }
@@ -1480,6 +1497,7 @@ class GameActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val MAX_SWF_DOWNLOAD_BYTES = 64L * 1024 * 1024
         const val EXTRA_URL = "extra_url"
         const val EXTRA_TITLE = "extra_title"
         const val EXTRA_TYPE = "extra_type"
@@ -1601,168 +1619,5 @@ class GameActivity : AppCompatActivity() {
                 putExtra(EXTRA_TYPE, type.name)
             })
         }
-
-        /**
-         * SWF 嗅探器脚本：深度扫描网页中的 SWF 文件。
-         *
-         * 扫描来源：
-         * 1. DOM 元素：<object data>、<embed src>、<param name="movie" value>
-         * 2. iframe src 属性
-         * 3. 所有元素的 data/src/href 属性（含 .swf）
-         * 4. Performance API 资源时间线（getEntriesByType('resource')）
-         * 5. 内联脚本中的 .swf URL（正则匹配）
-         * 6. hook XMLHttpRequest/fetch 捕获动态加载的 SWF
-         * 7. MutationObserver 监听动态插入的 Flash 元素
-         *
-         * 发现后通过 window.Android.onSwfFound(json) 回调到原生。
-         */
-        private const val SWF_SNIFFER_SCRIPT = """
-            (function(){
-              var found = {};
-              function addUrl(url, title){
-                if(!url) return;
-                try { url = new URL(url, location.href).href; } catch(e) { return; }
-                if(!/\.swf([?#]|$)/i.test(url) && !/application\/x-shockwave-flash/i.test(url)){
-                  // 不是 SWF URL，跳过（除非是 data URI 的 flash）
-                  if(!/^data:application\/x-shockwave-flash/i.test(url)) return;
-                }
-                if(found[url]) return;
-                var t = title || '';
-                if(!t){
-                  try { t = decodeURIComponent(url.split('/').pop().split('?')[0].replace(/\.swf$/i,'')); } catch(e){}
-                }
-                found[url] = {url:url, title:t, size:''};
-              }
-
-              // 1. 扫描 DOM 元素
-              function scanDOM(){
-                // object/embed 标签
-                var objs = document.querySelectorAll('object[data], embed[src]');
-                objs.forEach(function(el){
-                  var u = el.getAttribute('data') || el.getAttribute('src') || '';
-                  var t = el.getAttribute('title') || el.getAttribute('name') || '';
-                  if(u) addUrl(u, t);
-                });
-                // param name="movie"
-                var params = document.querySelectorAll('param[name="movie"], param[name="src"]');
-                params.forEach(function(p){
-                  var v = p.getAttribute('value') || '';
-                  if(v) addUrl(v, '');
-                });
-                // iframe src
-                var iframes = document.querySelectorAll('iframe[src]');
-                iframes.forEach(function(f){
-                  var s = f.getAttribute('src') || '';
-                  if(/\.swf/i.test(s)) addUrl(s, '');
-                });
-                // 所有带 .swf 的属性
-                var all = document.querySelectorAll('[data*=".swf"], [src*=".swf"], [href*=".swf"]');
-                all.forEach(function(el){
-                  ['data','src','href'].forEach(function(attr){
-                    var v = el.getAttribute(attr);
-                    if(v && /\.swf/i.test(v)) addUrl(v, el.getAttribute('title') || '');
-                  });
-                });
-              }
-
-              // 2. Performance API 资源时间线
-              function scanPerformance(){
-                try {
-                  var entries = performance.getEntriesByType('resource');
-                  entries.forEach(function(e){
-                    if(/\.swf([?#]|$)/i.test(e.name)) addUrl(e.name, '');
-                  });
-                } catch(e) {}
-              }
-
-              // 3. 扫描内联脚本中的 SWF URL
-              function scanScripts(){
-                var scripts = document.querySelectorAll('script:not([src])');
-                var re = /(?:https?:)?[^\s'"<>]+\.swf[^\s'"<>]*/gi;
-                scripts.forEach(function(s){
-                  var text = s.textContent || '';
-                  var m;
-                  while((m = re.exec(text)) !== null){
-                    addUrl(m[0], '');
-                  }
-                });
-                // 也扫描外部脚本变量的可能值
-                var extScripts = document.querySelectorAll('script[src]');
-                extScripts.forEach(function(s){
-                  var src = s.getAttribute('src') || '';
-                  if(/\.swf/i.test(src)) addUrl(src, '');
-                });
-              }
-
-              // 4. hook XHR/fetch（捕获未来动态加载的 SWF）
-              if(!window.__swfSniffHooked){
-                window.__swfSniffHooked = true;
-                var origOpen = XMLHttpRequest.prototype.open;
-                XMLHttpRequest.prototype.open = function(method, url){
-                  if(url && /\.swf([?#]|$)/i.test(url)) addUrl(url, '');
-                  return origOpen.apply(this, arguments);
-                };
-                var origFetch = window.fetch;
-                if(origFetch){
-                  window.fetch = function(input){
-                    var u = typeof input === 'string' ? input : (input && input.url ? input.url : '');
-                    if(u && /\.swf([?#]|$)/i.test(u)) addUrl(u, '');
-                    return origFetch.apply(this, arguments);
-                  };
-                }
-              }
-
-              // 5. 立即扫描
-              scanDOM();
-              scanPerformance();
-              scanScripts();
-
-              // 6. MutationObserver 监听动态插入的元素（持续 5 秒）
-              if(window.MutationObserver){
-                var mo = new MutationObserver(function(muts){
-                  muts.forEach(function(m){
-                    m.addedNodes.forEach(function(n){
-                      if(n.nodeType === 1){
-                        var u = n.getAttribute && (n.getAttribute('data') || n.getAttribute('src') || n.getAttribute('href') || '');
-                        if(u && /\.swf/i.test(u)) addUrl(u, n.getAttribute('title') || '');
-                        if(n.querySelectorAll){
-                          var inner = n.querySelectorAll('[data*=".swf"], [src*=".swf"], [href*=".swf"], param[name="movie"]');
-                          inner.forEach(function(el){
-                            var v = el.getAttribute('data') || el.getAttribute('src') || el.getAttribute('href') || el.getAttribute('value') || '';
-                            if(v && /\.swf/i.test(v)) addUrl(v, '');
-                          });
-                        }
-                      }
-                    });
-                  });
-                });
-                mo.observe(document.documentElement || document.body || document, {childList:true, subtree:true});
-                setTimeout(function(){ mo.disconnect(); }, 5000);
-              }
-
-              // 7. 延迟再次扫描（等页面 JS 执行完）并回调
-              setTimeout(function(){
-                scanDOM();
-                scanPerformance();
-                scanScripts();
-                var arr = [];
-                for(var u in found) arr.push(found[u]);
-                if(window.Android && window.Android.onSwfFound){
-                  window.Android.onSwfFound(JSON.stringify(arr));
-                } else {
-                  console.log('[SWF Sniffer] 未找到 window.Android 接口');
-                }
-              }, 1500);
-
-              // 立即也回调一次（快速发现）
-              setTimeout(function(){
-                var arr = [];
-                for(var u in found) arr.push(found[u]);
-                if(arr.length > 0 && window.Android && window.Android.onSwfFound){
-                  window.Android.onSwfFound(JSON.stringify(arr));
-                }
-              }, 500);
-            })();
-        """
     }
 }

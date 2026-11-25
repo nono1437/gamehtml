@@ -22,10 +22,6 @@ class WebAppInterface(private val context: Context) {
 
     private val handler = Handler(Looper.getMainLooper())
 
-    /** SWF 提取结果回调（由 GameActivity 设置） */
-    @Volatile
-    var swfExtractCallback: ((String) -> Unit)? = null
-
     @JavascriptInterface
     fun toast(msg: String?) {
         handler.post { Toast.makeText(context, msg ?: "", Toast.LENGTH_SHORT).show() }
@@ -172,35 +168,5 @@ class WebAppInterface(private val context: Context) {
     @JavascriptInterface
     fun finish() {
         if (context is Activity) handler.post { context.finish() }
-    }
-
-    /**
-     * JS 嗅探器回调：报告在页面中发现的 SWF URL 列表。
-     * @param json JSON 数组字符串，如 [{"url":"...","title":"...","size":"12MB"}]
-     */
-    @JavascriptInterface
-    fun onSwfFound(json: String?) {
-        if (json.isNullOrEmpty()) return
-        swfExtractCallback?.let { cb ->
-            handler.post { cb(json) }
-        }
-    }
-
-    /**
-     * 读取本地 SWF 文件内容（Base64），供 JS 创建 Blob URL。
-     * 绕过 WebView 对 content:// URI 的跨域限制。
-     */
-    @JavascriptInterface
-    fun readLocalSwf(uri: String?): String? {
-        if (uri.isNullOrEmpty()) return null
-        return try {
-            val parsed = android.net.Uri.parse(uri)
-            val data = context.contentResolver.openInputStream(parsed)?.use { it.readBytes() }
-                ?: throw java.io.IOException("无法打开文件流")
-            Log.d("WebApp:LocalSwf", "读取完成: ${data.size} bytes")
-            android.util.Base64.encodeToString(data, android.util.Base64.NO_WRAP)
-        } catch (e: Exception) {
-            null
-        }
     }
 }

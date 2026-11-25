@@ -52,8 +52,6 @@ class FloatingMenuView @JvmOverloads constructor(
         fun onClose()
         fun onExtractSwf()
         fun onFlashDiagnostics() {}
-        fun hasSeer2Shortcuts(): Boolean = false
-        fun onOpenSeer2Shortcuts() {}
         fun hasLocalResources(): Boolean = false
         fun onChooseLocalResources() {}
     }
@@ -189,11 +187,6 @@ class FloatingMenuView @JvmOverloads constructor(
         ).toMutableList()
         if (callbacks?.hasLocalResources() == true) {
             items.add(9, MenuItem("本地资源目录", R.drawable.ic_key) { callbacks?.onChooseLocalResources() })
-        }
-        if (callbacks?.hasSeer2Shortcuts() == true) {
-            items.add(0, MenuItem(context.getString(R.string.seer2_shortcuts), R.drawable.ic_category) {
-                callbacks?.onOpenSeer2Shortcuts()
-            })
         }
 
         // 构建按钮视图

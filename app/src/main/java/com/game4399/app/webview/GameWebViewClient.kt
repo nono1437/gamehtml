@@ -5,6 +5,7 @@ import android.net.Uri
 import android.net.http.SslError
 import android.os.SystemClock
 import android.webkit.CookieManager
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.SslErrorHandler
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -36,6 +37,7 @@ open class GameWebViewClient(
         fun onProgress(progress: Int)
         fun onError(url: String?, errorCode: Int, description: String?)
         fun onSwfIntercepted(swfUrl: String, pageUrl: String)
+        fun onRendererGone()
         fun shouldInjectRuffle(url: String?): Boolean
         /** 获取本地 SWF 文件的真实 URI */
         fun getLocalSwfUri(): String?
@@ -43,6 +45,8 @@ open class GameWebViewClient(
     }
 
     @Volatile private var pageUrl: String? = null
+    @Volatile internal var swfDiscovery = SwfDiscovery()
+        private set
     internal var seer2SocketBridge: Seer2SocketBridge? = null
 
     /** 常见广告域名 */
@@ -325,7 +329,7 @@ open class GameWebViewClient(
     }
 
     /** Buffer a complete, bounded asset so a truncated response never looks like a successful download. */
-    private fun readAsset(input: InputStream, limit: Int = 64 * 1024 * 1024): ByteArray {
+    private fun readAsset(input: InputStream, limit: Int = MAX_ASSET_BYTES): ByteArray {
         val output = ByteArrayOutputStream()
         val buffer = ByteArray(16 * 1024)
         while (true) {
@@ -337,37 +341,21 @@ open class GameWebViewClient(
     }
 
     private fun interceptDiscoveryFallback(officialUrl: String, source: String?): WebResourceResponse? {
-        val mirror = Seer2DiscoveryFallback.mirrorUrl(officialUrl) ?: return null
+        if (source != pageUrl) return null
+        val acceptEndpoint = seer2SocketBridge?.receiverFor(source, "/ip.txt")
         val started = SystemClock.elapsedRealtime()
-        var status: Int? = null
-        val verified = try {
-            val connection = FlashHttp.open(mirror, null, userAgent, timeoutMillis = 2500, allowRedirect = { false })
-            try {
-                status = connection.responseCode
-                if (status != 200) null else {
-                    val bytes = connection.inputStream.use { readAsset(it, Seer2Assets.DISCOVERY_MAX_BYTES) }
-                    val length = connection.getHeaderField("Content-Length")?.toLongOrNull()
-                    if (length != null && bytes.size.toLong() != length) null else {
-                        Seer2DiscoveryFallback.verify(officialUrl, bytes) { host ->
-                            runCatching { InetAddress.getAllByName(host).mapNotNull { it.hostAddress } }
-                                .getOrDefault(emptyList())
-                        }
-                    }
-                }
-            } finally {
-                connection.disconnect()
-            }
-        } catch (_: java.io.IOException) {
-            null
-        }
+        val verified = Seer2DiscoveryFallback.fromDns(officialUrl, ::resolveOfficialHost)
         diagnostics.record(
-            if (verified != null) "备用地址已通过官服域名核验" else "备用查询失败或地址未通过核验",
-            mirror, status, verified?.size?.toLong(), SystemClock.elapsedRealtime() - started
+            if (verified != null) "使用官服域名解析的备用地址" else "官服域名无法提供备用地址",
+            officialUrl, verified?.let { 200 }, verified?.size?.toLong(), SystemClock.elapsedRealtime() - started
         )
         if (verified == null || source != pageUrl) return null
-        seer2SocketBridge?.receiverFor(source, "/ip.txt")?.invoke(verified)
+        acceptEndpoint?.invoke(verified)
         return assetResponse(200, verified)
     }
+
+    private fun resolveOfficialHost(host: String): List<String> =
+        runCatching { InetAddress.getAllByName(host).mapNotNull { it.hostAddress } }.getOrDefault(emptyList())
 
     private fun interceptRemote(
         url: String,
@@ -384,9 +372,11 @@ open class GameWebViewClient(
         }
 
         val started = SystemClock.elapsedRealtime()
+        val discovered = swfDiscovery
         val cacheKey = resourceCache?.let { Seer2Assets.versionedResourceKey(url) }
         if (resourceCache != null && cacheKey != null) {
             Seer2ResourceCache.read(resourceCache, cacheKey)?.let { data ->
+                discovered.recordResponse(url, data)
                 diagnostics.record("使用本地资源缓存", url, 200, data.size.toLong(), SystemClock.elapsedRealtime() - started)
                 return assetResponse(200, data)
             }
@@ -428,13 +418,18 @@ open class GameWebViewClient(
                         millis = SystemClock.elapsedRealtime() - started)
                     return assetResponse(status.takeIf { it in 400..599 } ?: 502, cors = if (seer2) null else "*")
                 }
-                val data = conn.inputStream.use {
-                    if (discovery) readAsset(it, Seer2Assets.DISCOVERY_MAX_BYTES) else readAsset(it)
-                }
                 val expectedSize = conn.getHeaderField("Content-Length")?.toLongOrNull()
+                val limit = if (discovery) Seer2Assets.DISCOVERY_MAX_BYTES else MAX_ASSET_BYTES
+                if (expectedSize != null && expectedSize > limit) {
+                    diagnostics.record("资源超过大小上限", conn.url.toString(), status, expectedSize,
+                        SystemClock.elapsedRealtime() - started)
+                    return assetResponse(415, cors = if (seer2) null else "*")
+                }
+                val data = conn.inputStream.use { readAsset(it, limit) }
                 val complete = expectedSize == null || expectedSize == data.size.toLong()
                 val valid = complete && if (seer2) Seer2Assets.validPayload(conn.url.path, data)
                     else FlashPayload.isSwf(data, data.size.toLong())
+                if (valid && !discovery) discovered.recordResponse(url, data)
                 if (valid && conn.url.path == configPath) acceptEndpoint?.invoke(data)
                 if (valid && resourceCache != null && cacheKey != null &&
                     Seer2Assets.versionedResourceKey(conn.url.toString()) == cacheKey) {
@@ -519,8 +514,20 @@ open class GameWebViewClient(
         }
     }
 
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.O)
+    override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+        diagnostics.record(if (detail.didCrash()) "WebView 渲染进程崩溃" else "WebView 渲染进程被系统终止",
+            pageUrl)
+        runCatching { seer2SocketBridge?.close() }
+        (view.parent as? android.view.ViewGroup)?.removeView(view)
+        view.destroy()
+        callback.onRendererGone()
+        return true
+    }
+
     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
         super.onPageStarted(view, url, favicon)
+        swfDiscovery = SwfDiscovery()
         seer2SocketBridge?.onPageStarted(url)
         pageUrl = url
         callback.onPageStarted(url)
@@ -663,6 +670,7 @@ open class GameWebViewClient(
 
     companion object {
         private const val LOCAL_PREFIX = "/_local/"
+        private const val MAX_ASSET_BYTES = 64 * 1024 * 1024
         private const val LOCAL_MOVIE_PATH = "${LOCAL_PREFIX}game.swf"
         const val LOCAL_MOVIE_URL = "https://flash.local$LOCAL_MOVIE_PATH"
         private const val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
